@@ -1,0 +1,6 @@
+/target
+/v1
+*.swp
+*.bc
+*.o
+*.ll

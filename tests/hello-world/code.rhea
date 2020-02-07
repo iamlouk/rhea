@@ -1,0 +1,7 @@
+extern printf := (fmt: String, ...): Int;
+
+main := (): Int -> {
+	printf("Hello, World!\n");
+	0
+};
+
