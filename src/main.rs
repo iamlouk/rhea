@@ -125,9 +125,10 @@ fn main() {
         use inkwell::OptimizationLevel;
 
         match vartypes.lookup("main") {
-            Ok(typ) => match typ.as_ref() {
-                &ast::Type::Func(ref args, ref rettyp, is_vararg)
-                    if is_vararg == false && args.len() == 0 && rettyp.as_ref() == &ast::Type::Int => (),
+            Ok(typ) => match typ.0 {
+                ast::Type::Func(args, rettyp, is_vararg)
+                    if is_vararg == false && args.len() == 0
+                    && rettyp.as_ref() == &ast::Type::Int => (),
                 _ => {
                     eprintln!("main should have the type `(): Int`");
                     std::process::exit(5);
@@ -139,7 +140,8 @@ fn main() {
             }
         }
 
-        let execution_engine = match codegen.module.create_jit_execution_engine(OptimizationLevel::Default) {
+        let execution_engine = match codegen.module
+                .create_jit_execution_engine(OptimizationLevel::Default) {
             Ok(ee) => ee,
             Err(e) => {
                 eprintln!("LLVM-Jit-Error: {}", e.to_string());
@@ -157,7 +159,8 @@ fn main() {
         };
 
         let res = unsafe { mainfn.call() };
-        println!("-> {}", res);
-
+        if matches.is_present("dump") {
+            eprintln!("-> {}", res);
+        }
     }
 }

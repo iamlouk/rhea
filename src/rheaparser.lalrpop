@@ -13,12 +13,12 @@ pub Program: ast::Program<'input> = {
 
 Definition: ast::Definition<'input> = {
 	"extern" <id: Id> ":=" <args: VarArgs> ":" <rettype: Type> ";" => {
-		ast::Definition::Extern(id, Arc::new(ast::Type::Func(
-			args.into_iter().map(|e| e.1).collect(), rettype, true)))
+		ast::Definition::Extern(id, ast::Type::Func(Arc::new(
+			args.into_iter().map(|e| e.1).collect()), Arc::new(rettype), true))
 	},
 	"extern" <id: Id> ":=" <args: Args> ":" <rettype: Type> ";" => {
-		ast::Definition::Extern(id, Arc::new(ast::Type::Func(
-			args.into_iter().map(|e| e.1).collect(), rettype, false)))
+		ast::Definition::Extern(id, ast::Type::Func(Arc::new(
+			args.into_iter().map(|e| e.1).collect()), Arc::new(rettype), false))
 	},
 	<id: Id> ":=" <func: Function> ";" => {
 		let mut f = func.node;
@@ -38,11 +38,16 @@ Function: Box<Node<'input, ast::Function<'input>>> = {
 
 Expr: Box<Node<'input, ast::Expr<'input>>> = {
 	<a: Logic> => a,
-	"if" <cond: Logic> <block: Block> "else" <expr: Expr> => Node::new(ast::Expr::If(cond, block, Some(expr))),
+	"if" <cond: Logic> <block: Block> "else" <expr: Expr> =>
+		Node::new(ast::Expr::If(cond, block, Some(expr))),
 	"if" <cond: Logic> <block: Block> => Node::new(ast::Expr::If(cond, block, None)),
 	"for" <cond: Logic> <block: Block> => Node::new(ast::Expr::For(None, cond, None, block)),
-	"for" <init: Logic> ";" <cond: Logic> ";" <inc: Logic> <block: Block> =>
+	"for" <init: Expr> ";" <cond: Logic> ";" <inc: Expr> <block: Block> =>
 		Node::new(ast::Expr::For(Some(init), cond, Some(inc), block)),
+	"mut" <id: Id> ":=" <body: Expr> =>
+		Node::new(ast::Expr::VarDef(id, ast::VarProp::mutable(), body)),
+	<id: Id> "=" <body: Expr> =>
+		Node::new(ast::Expr::VarAssign(id, ast::VarProp::default(), body))
 };
 
 Logic: Box<Node<'input, ast::Expr<'input>>> = {
@@ -52,8 +57,10 @@ Logic: Box<Node<'input, ast::Expr<'input>>> = {
 };
 
 Condition: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Condition> "<" <b: Term> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Smaller, b)),
-	<a: Condition> "==" <b: Term> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Equal, b)),
+	<a: Condition> "<" <b: Term> =>
+		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Smaller, b)),
+	<a: Condition> "==" <b: Term> =>
+		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Equal, b)),
 	<a: Term> => a
 };
 
@@ -79,31 +86,26 @@ Final: Box<Node<'input, ast::Expr<'input>>> = {
 	<id: Id> => match id {
 		"true" => Node::new(ast::Expr::BoolLit(true)),
 		"false" => Node::new(ast::Expr::BoolLit(false)),
-		_ => Node::new(ast::Expr::Identifier(id))
+		_ => Node::new(ast::Expr::Identifier(id, ast::VarProp::default()))
 	},
 	<block: Block> => block
 };
 
-Type: Arc<ast::Type<'input>> = {
+Type: ast::Type<'input> = {
 	<id: Id> => {
-		lazy_static! {
-			static ref CHAR: Arc<ast::Type<'static>> = Arc::new(ast::Type::Char);
-			static ref BOOL: Arc<ast::Type<'static>> = Arc::new(ast::Type::Bool);
-			static ref INT: Arc<ast::Type<'static>> = Arc::new(ast::Type::Int);
-			static ref REAL: Arc<ast::Type<'static>> = Arc::new(ast::Type::Real);
-		}
-
 		match id {
-			"Real" => REAL.clone(),
-			"Bool" => BOOL.clone(),
-			"Int" => INT.clone(),
-			"Char" => CHAR.clone(),
-			id => Arc::new(ast::Type::Unresolved(id))
+			"Real" => ast::Type::Real,
+			"Bool" => ast::Type::Bool,
+			"Int" => ast::Type::Int,
+			"Char" => ast::Type::Char,
+			"Void" => ast::Type::Void,
+			id => ast::Type::Unresolved(id)
 		}
-	}
+	},
+	"*" <typ: Type> => ast::Type::Ptr(Arc::new(typ))
 };
 
-Args: Vec<(&'input str, Arc<ast::Type<'input>>)> = {
+Args: Vec<(&'input str, ast::Type<'input>)> = {
 	"(" <arg0:(Id ":" Type)?> <args:("," Id ":" Type)*> ")" => match arg0 {
 		Some((i, _, t)) => {
 			let mut argvec = vec![(i, t)];
@@ -114,7 +116,7 @@ Args: Vec<(&'input str, Arc<ast::Type<'input>>)> = {
 	}
 };
 
-VarArgs: Vec<(&'input str, Arc<ast::Type<'input>>)> = {
+VarArgs: Vec<(&'input str, ast::Type<'input>)> = {
 	"(" <arg0:(Id ":" Type)?> <args:("," Id ":" Type)*> (",")? "..." ")" => match arg0 {
 		Some((i, _, t)) => {
 			let mut argvec = vec![(i, t)];
@@ -125,10 +127,9 @@ VarArgs: Vec<(&'input str, Arc<ast::Type<'input>>)> = {
 	}
 };
 
-
 Block: Box<Node<'input, ast::Expr<'input>>> = {
 	"{" "}" => ast::Node::new(ast::Expr::Block(vec![])),
-	"{" <arg0: Expr> <args: (";" Expr)*> "}" => {
+	"{" <arg0: Expr> <args: (";" Expr)*> (";")? "}" => {
 		let mut vec = vec![arg0];
 		for (_, arg) in args.into_iter() { vec.push(arg); }
 		ast::Node::new(ast::Expr::Block(vec.into_iter().map(|e| *e).collect()))

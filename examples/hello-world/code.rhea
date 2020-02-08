@@ -1,4 +1,4 @@
-extern printf := (fmt: String, ...): Int;
+extern printf := (fmt: *Char, ...): Int;
 
 main := (): Int -> {
 	printf("Hello, World!\n");

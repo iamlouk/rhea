@@ -1,0 +1,17 @@
+extern printf := (fmt: *Char, ...): Int;
+
+fib := (x: Int): Int ->
+	if x == 0 | x == 1 { x }
+	else { fib(x - 1) + fib(x - 2) };
+
+print_fibs := (n: Int): Void -> if n == 0 { {} } else {
+	print_fibs(n - 1);
+	printf("fib(%d) = %d\n", n, fib(n));
+	{}
+};
+
+main := (): Int -> {
+	print_fibs(10);
+	0
+};
+

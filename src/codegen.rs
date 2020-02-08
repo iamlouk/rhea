@@ -1,7 +1,6 @@
-use crate::ast::{Program, Function, Node, Expr, Definition, Type, Operator};
+use crate::ast::{Program, Function, Node, Expr, Definition, Type, Operator, VarProp};
 use crate::utils;
 
-use std::sync::Arc;
 use std::collections::HashMap;
 
 use inkwell::builder::Builder;
@@ -39,7 +38,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         for def in &program.defs {
             match def {
                 Definition::Function(f) => self.gen_code_func(&f, &mut env)?,
-                Definition::Extern(name, typ) => match typ.as_ref() {
+                Definition::Extern(name, ref typ) => match typ {
                     &Type::Func(ref argtypes, ref rettype, is_vararg) => {
                         self.gen_func_def(name, argtypes, rettype, is_vararg)?;
                     },
@@ -50,11 +49,15 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         Ok(())
     }
 
-    fn gen_func_def(&mut self, name: &'input str, argtypes: &Vec<Arc<Type<'input>>>,
-            rettype: &Type<'input>, is_vararg: bool) -> Result<inkwell::values::FunctionValue<'ctx>, utils::Error> {
-        let llvmrettype = self.get_llvm_type(rettype);
+    fn gen_func_def(&mut self, name: &'input str, argtypes: &Vec<Type<'input>>,
+            rettype: &Type<'input>, is_vararg: bool)
+            -> Result<inkwell::values::FunctionValue<'ctx>, utils::Error> {
         let llvmargtypes: Vec<_> = argtypes.iter().map(|arg| self.get_llvm_type(arg)).collect();
-        let llvmfntype = llvmrettype.fn_type(&llvmargtypes, is_vararg);
+
+        let llvmfntype = match rettype {
+            &Type::Void => self.context.void_type().fn_type(&llvmargtypes, is_vararg),
+            rettype => self.get_llvm_type(rettype).fn_type(&llvmargtypes, is_vararg)
+        };
 
         Ok(self.module.add_function(name, llvmfntype, None))
     }
@@ -65,7 +68,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
 
         let args = function.args.iter().map(|arg| arg.1.clone()).collect();
         let llvmfn = self.gen_func_def(function.name.unwrap(),
-            &args, function.rettype.as_ref(), function.is_vararg)?;
+            &args, &function.rettype, function.is_vararg)?;
 
         env.push_scope();
         for i in 0..function.args.len() {
@@ -78,7 +81,10 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
 
         let retval = self.gen_code_node(function.body.as_ref(), env, &bb)?;
 
-        self.builder.build_return(Some(&retval));
+        self.builder.build_return(match function.rettype {
+            Type::Void => None,
+            _ => Some(&retval)
+        });
         env.pop_scope();
         Ok(())
     }
@@ -87,7 +93,15 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             env: &mut utils::Env<'input, BasicValueEnum<'ctx>>, bb: &BasicBlock)
             -> Result<BasicValueEnum<'ctx>, utils::Error> {
         match &node.node {
-            Expr::Identifier(id) => env.lookup(id),
+            Expr::Identifier(id, VarProp { is_extern: _, is_mutable: false }) => env.lookup(id),
+
+            Expr::Identifier(id, VarProp { is_extern: _, is_mutable: true }) => {
+                let ptr = match env.lookup(id)? {
+                    BasicValueEnum::PointerValue(ptr) => ptr,
+                    _ => panic!()
+                };
+                Ok(self.builder.build_load(ptr, id))
+            },
 
             Expr::IntLit(num) =>
                 Ok(BasicValueEnum::IntValue(self.context.i64_type()
@@ -98,12 +112,13 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                     return Ok(global.clone().as_basic_value_enum())
                 }
 
-                let global = self.builder.build_global_string_ptr(string, "global_string");
+                let string = utils::unescape_parsed_string(string)?;
+                let global = self.builder.build_global_string_ptr(string.as_str(), "global_string");
                 Ok(global.as_basic_value_enum())
             },
 
             Expr::BinaryExpr(lhs, op, rhs) => {
-                if lhs.typ.as_ref() == &Type::Bool && rhs.typ.as_ref() == &Type::Bool
+                if lhs.typ == Type::Bool && rhs.typ == Type::Bool
                     && (op == &Operator::And || op == &Operator::Or) {
                     let lhsval = self.gen_code_node(lhs, env, bb)?;
                     let func = bb.get_parent().unwrap();
@@ -151,8 +166,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                     return Ok(phi.as_basic_value());
                 }
 
-                let (lhsval, lhstyp) = (self.gen_code_node(lhs, env, bb)?, lhs.typ.as_ref());
-                let (rhsval, rhstyp) = (self.gen_code_node(rhs, env, bb)?, rhs.typ.as_ref());
+                let (lhsval, lhstyp) = (self.gen_code_node(lhs, env, bb)?, &lhs.typ);
+                let (rhsval, rhstyp) = (self.gen_code_node(rhs, env, bb)?, &rhs.typ);
                 let res = match (lhstyp, op, rhstyp) {
                     (&Type::Int, Operator::Add, &Type::Int) =>
                         BasicValueEnum::IntValue(
@@ -189,7 +204,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             },
 
             Expr::Call(callee, args) => match callee.node {
-                Expr::Identifier(fnname) => {
+                Expr::Identifier(fnname, _) => {
                     let llvmfn = self.module.get_function(fnname).unwrap();
                     let args: Vec<BasicValueEnum<'ctx>> = args.iter().map(|arg| {
                         self.gen_code_node(arg, env, bb)
@@ -229,9 +244,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 elsebb = self.builder.get_insert_block().unwrap();
 
                 self.builder.position_at_end(&donebb);
-                let typ = node.typ.as_ref();
-                if typ != &Type::Void {
-                    let phi = self.builder.build_phi(self.get_llvm_type(typ), "phires");
+                if node.typ != Type::Void {
+                    let phi = self.builder.build_phi(self.get_llvm_type(&node.typ), "phires");
                     let incomings: [(&dyn BasicValue<'ctx>, &BasicBlock); 2] = [
                         (&thenval, &thenbb),
                         (&elseval, &elsebb)
@@ -282,6 +296,25 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 Ok(retval)
             },
 
+            Expr::VarDef(name, VarProp { is_extern: _, is_mutable: true }, value) => {
+                let valtyp = &value.typ;
+                let value = self.gen_code_node(value, env, bb)?;
+                let ptr = self.builder.build_alloca(self.get_llvm_type(valtyp), name);
+                env.define(name, ptr.as_basic_value_enum())?;
+                self.builder.build_store(ptr, value);
+                Ok(value)
+            },
+
+            Expr::VarAssign(name, VarProp { is_extern: _, is_mutable: true }, value) => {
+                let value = self.gen_code_node(value, env, bb)?;
+                let ptr = match env.lookup(name)? {
+                    BasicValueEnum::PointerValue(ptr) => ptr,
+                    _ => panic!()
+                };
+                self.builder.build_store(ptr, value);
+                Ok(value)
+            },
+
             _ => unimplemented!()
         }
     }
@@ -294,7 +327,12 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         match *typ {
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Int => self.context.i64_type().as_basic_type_enum(),
-            _ => unimplemented!()
+            Type::Char => self.context.i8_type().as_basic_type_enum(),
+            Type::Ptr(ref typ) => {
+                let llvmtyp = self.get_llvm_type(typ.as_ref());
+                llvmtyp.ptr_type(inkwell::AddressSpace::Generic).as_basic_type_enum()
+            },
+            _ => unimplemented!("{:?}", typ)
         }
     }
 

@@ -2,13 +2,15 @@ use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub enum Error {
-    LLVMError(String)
+    LLVMError(String),
+    Unspecified(&'static str)
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::LLVMError(str) => write!(f, "LLVM-Error: {}", str)
+            Error::LLVMError(str) => write!(f, "LLVM-Error: {}", str),
+            Error::Unspecified(str) => write!(f, "unspecified error: {}", str)
         }
     }
 }
@@ -46,3 +48,28 @@ impl<'input, T: Clone> Env<'input, T> {
         panic!(name.to_owned())
     }
 }
+
+pub fn unescape_parsed_string(raw: &str) -> Result<String, Error> {
+    let mut string = String::with_capacity(raw.len());
+
+    let mut chars = raw.chars();
+
+    chars.next();
+    chars.next_back();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => string.push('\n'),
+                Some('t') => string.push('\t'),
+                Some('\\') => string.push('\\'),
+                Some(_) | None => return Err(Error::Unspecified("illegal string literal"))
+            }
+        } else {
+            string.push(c);
+        }
+    }
+
+    Ok(string)
+}
+

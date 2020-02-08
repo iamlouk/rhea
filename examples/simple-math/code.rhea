@@ -1,0 +1,17 @@
+extern printf := (fmt: *Char, ...): Int;
+
+pow := (base: Int, exp: Int): Int -> if exp == 1 { base } else {
+	base * pow(base, exp - 1)
+};
+
+sum := (a: Int, b: Int): Int -> if a == b { 0 } else {
+	a + sum(a + 1, b)
+};
+
+main := (): Int -> {
+	printf("%d\n", sum(0, 10));
+	printf("%d\n", pow(2, 10));
+	printf("%d + %d = %d\n", 30 + 12, 4 * 2, 60 - 10);
+	0
+};
+
