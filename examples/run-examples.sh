@@ -17,7 +17,7 @@ i=0
 for dir in ./*/; do
 	if [ -d $dir ]; then
 		i=$(($i + 1))
-		printf "${CYAN}test #${i}:${NC} $dir\n"
+		printf "${CYAN}test #${i}:${NC} $(basename $dir)\n"
 
 		$RHEA --jit --input "$dir/code.rhea" | diff "$dir/expected_output.txt" -
 		if [ $? -ne 0 ]; then

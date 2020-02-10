@@ -2,6 +2,7 @@
 #![allow(unused_parens)]
 
 use std::io::Read;
+use std::convert::TryInto;
 
 #[macro_use]
 extern crate lalrpop_util;
@@ -15,7 +16,7 @@ extern crate clap;
 mod ast;
 mod utils;
 mod codegen;
-lalrpop_mod!(pub rheaparser);
+lalrpop_mod!(pub parser);
 
 fn main() {
     let matches = clap::App::new("RHEA Programming Language Compiler + JIT")
@@ -55,9 +56,7 @@ fn main() {
         .get_matches();
 
     let input = match matches.value_of("input") {
-        Some(filepath) => {
-            std::fs::read_to_string(filepath).unwrap()
-        },
+        Some(filepath) => std::fs::read_to_string(filepath).unwrap(),
         None => {
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input).unwrap();
@@ -65,7 +64,7 @@ fn main() {
         }
     };
 
-    let mut prog: ast::Program = match rheaparser::ProgramParser::new().parse(&input) {
+    let mut prog: ast::Program = match parser::ProgramParser::new().parse(&input) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error while parsing: {:?}", e);
@@ -92,7 +91,6 @@ fn main() {
         use inkwell::OptimizationLevel::Aggressive;
         use inkwell::passes::{PassManager, PassManagerBuilder};
         use inkwell::targets::{InitializationConfig, Target};
-
 
         let config = InitializationConfig::default();
         Target::initialize_native(&config).unwrap();
@@ -125,17 +123,11 @@ fn main() {
         use inkwell::OptimizationLevel;
 
         match vartypes.lookup("main") {
-            Ok(typ) => match typ.0 {
-                ast::Type::Func(args, rettyp, is_vararg)
-                    if is_vararg == false && args.len() == 0
-                    && rettyp.as_ref() == &ast::Type::Int => (),
-                _ => {
-                    eprintln!("main should have the type `(): Int`");
-                    std::process::exit(5);
-                }
-            },
-            Err(_) => {
-                eprintln!("your code needs a `main` function to run in JIT-mode");
+            Ok((ast::Type::Func(args, rettyp, is_vararg), _))
+                if is_vararg == false && args.len() == 0
+                && rettyp.as_ref() == &ast::Type::Int => (),
+            _ => {
+                eprintln!("your code needs a `main: (): Int` function to run in JIT-mode");
                 std::process::exit(5);
             }
         }
@@ -162,5 +154,7 @@ fn main() {
         if matches.is_present("dump") {
             eprintln!("-> {}", res);
         }
+
+        std::process::exit(res.try_into().unwrap_or(1));
     }
 }

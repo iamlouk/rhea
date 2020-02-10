@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use crate::utils;
 
+pub type ExprNode<'input> = Node<'input, Expr<'input>>;
+
 #[derive(Debug)]
 pub struct Program<'input> {
     pub defs: Vec<Definition<'input>>
@@ -125,18 +127,20 @@ pub enum Expr<'input> {
     IntLit(i64),
     RealLit(f64),
     BoolLit(bool),
-    BinaryExpr(Box<Node<'input, Expr<'input>>>, Operator, Box<Node<'input, Expr<'input>>>),
-    Call(Box<Node<'input, Expr<'input>>>, Vec<Node<'input, Expr<'input>>>),
-    If(Box<Node<'input, Expr<'input>>>,
-       Box<Node<'input, Expr<'input>>>,
-       Option<Box<Node<'input, Expr<'input>>>>),
-    For(Option<Box<Node<'input, Expr<'input>>>>,
-        Box<Node<'input, Expr<'input>>>,
-        Option<Box<Node<'input, Expr<'input>>>>,
-        Box<Node<'input, Expr<'input>>>),
-    Block(Vec<Node<'input, Expr<'input>>>),
-    VarDef(&'input str, VarProp, Box<Node<'input, Expr<'input>>>),
-    VarAssign(&'input str, VarProp, Box<Node<'input, Expr<'input>>>)
+    BinaryExpr(Box<ExprNode<'input>>, Operator, Box<ExprNode<'input>>),
+    Call(Box<ExprNode<'input>>, Vec<ExprNode<'input>>),
+    If(Box<ExprNode<'input>>,
+       Box<ExprNode<'input>>,
+       Option<Box<ExprNode<'input>>>),
+    For(Option<Box<ExprNode<'input>>>,
+        Box<ExprNode<'input>>,
+        Option<Box<ExprNode<'input>>>,
+        Box<ExprNode<'input>>),
+    Block(Vec<ExprNode<'input>>),
+    VarDef(&'input str, VarProp, Box<ExprNode<'input>>),
+    Assign(Box<ExprNode<'input>>, Box<ExprNode<'input>>),
+    Cast(Box<ExprNode<'input>>, Type<'input>),
+    PtrDeref(Box<ExprNode<'input>>, u32)
 }
 
 #[derive(Clone)]
@@ -179,6 +183,8 @@ impl<'input> Node<'input, Expr<'input>> {
 
                     (&Type::Bool, Operator::Or, Type::Bool) => lhs,
                     (&Type::Bool, Operator::And, Type::Bool) => lhs,
+
+                    (&Type::Ptr(_), Operator::Add, Type::Int) => lhs,
 
                     (a, op, b) => {
                         println!("{:?} {:?} {:?}", a, op, b);
@@ -261,23 +267,51 @@ impl<'input> Node<'input, Expr<'input>> {
             },
             Expr::VarDef(name, props, value) => {
                 let typ = value.check_type(vartypes, deftypes)?;
-                vartypes.define(name, (typ, *props))?;
-                Type::Void
+                if typ == Type::Void {
+                    panic!()
+                } else {
+                    vartypes.define(name, (typ, *props))?;
+                    Type::Void
+                }
             },
-            Expr::VarAssign(name, ref mut props, value) => {
-                let (typ, varprops) = vartypes.lookup(name)?;
-                let valtyp = value.check_type(vartypes, deftypes)?;
-                if typ != valtyp {
-                    panic!();
-                }
+            Expr::Assign(lval, value) => match &mut (*lval).node {
+                Expr::Identifier(name, ref mut props) => {
+                    let (typ, varprops) = vartypes.lookup(name)?;
+                    let valtyp = value.check_type(vartypes, deftypes)?;
+                    if typ != valtyp {
+                        panic!();
+                    }
 
-                if varprops.is_mutable == false {
-                    panic!();
-                }
+                    if varprops.is_mutable == false {
+                        panic!();
+                    }
 
-                self.typ = valtyp;
-                *props = varprops;
-                Type::Void
+                    self.typ = valtyp;
+                    *props = varprops;
+                    Type::Void
+                },
+                Expr::PtrDeref(lval, _) => {
+                    let lvaltyp = lval.check_type(vartypes, deftypes)?;
+                    let valtyp = value.check_type(vartypes, deftypes)?;
+                    if let Type::Ptr(lvaltyp) = lvaltyp {
+                        if valtyp == *lvaltyp && valtyp != Type::Void {
+                            Type::Void
+                        } else {
+                            panic!()
+                        }
+                    } else {
+                        panic!()
+                    }
+                },
+                _ => panic!()
+            },
+            Expr::Cast(value, typ) => match (value.check_type(vartypes, deftypes)?, typ) {
+                (Type::Ptr(_), Type::Ptr(totyp)) => Type::Ptr(totyp.clone()),
+                _ => unimplemented!()
+            },
+            Expr::PtrDeref(ptrvalue, _) => match ptrvalue.check_type(vartypes, deftypes)? {
+                Type::Ptr(valtyp) => valtyp.as_ref().clone(),
+                _ => unimplemented!()
             }
         };
 

@@ -186,6 +186,19 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                             self.builder.build_int_signed_div(
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "subres")),
 
+                    (&Type::Ptr(_), Operator::Add, &Type::Int) => {
+                        let (ptr, offset) = match (lhsval, rhsval) {
+                            (BasicValueEnum::PointerValue(ptr), BasicValueEnum::IntValue(offset))
+                                => (ptr, offset),
+                            _ => panic!()
+                        };
+
+                        let ptr = unsafe {
+                            self.builder.build_gep(ptr, &[offset], "ptrderef")
+                        };
+
+                        ptr.as_basic_value_enum()
+                    },
 
                     (&Type::Int, Operator::Smaller, &Type::Int) =>
                         BasicValueEnum::IntValue(
@@ -305,14 +318,65 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 Ok(value)
             },
 
-            Expr::VarAssign(name, VarProp { is_extern: _, is_mutable: true }, value) => {
+            Expr::VarDef(name, VarProp { is_extern: _, is_mutable: false }, value) => {
                 let value = self.gen_code_node(value, env, bb)?;
-                let ptr = match env.lookup(name)? {
+                env.define(name, value)?;
+                Ok(value)
+            },
+
+            Expr::Assign(lval, value) => match &(*lval).node {
+                Expr::Identifier(name, VarProp { is_extern: _, is_mutable: true }) => {
+                    let value = self.gen_code_node(value, env, bb)?;
+                    let ptr = match env.lookup(name)? {
+                        BasicValueEnum::PointerValue(ptr) => ptr,
+                        _ => panic!()
+                    };
+                    self.builder.build_store(ptr, value);
+                    Ok(value)
+                },
+                Expr::PtrDeref(lval, offset) => {
+                    let value = self.gen_code_node(value, env, bb)?;
+                    let ptr = match self.gen_code_node(&lval, env, bb)? {
+                        BasicValueEnum::PointerValue(ptr) => ptr,
+                        _ => panic!()
+                    };
+
+                    let offset = self.context.i64_type().const_int(*offset as u64, false);
+                    let ptr = unsafe {
+                        self.builder.build_gep(ptr, &[offset], "ptrderef")
+                    };
+                    self.builder.build_store(ptr, value);
+
+                    Ok(value)
+                },
+                _ => panic!()
+            },
+
+            Expr::PtrDeref(lval, offset) => {
+                let ptr = match self.gen_code_node(lval, env, bb)? {
                     BasicValueEnum::PointerValue(ptr) => ptr,
                     _ => panic!()
                 };
-                self.builder.build_store(ptr, value);
-                Ok(value)
+
+                let offset = self.context.i64_type().const_int(*offset as u64, false);
+                let ptr = unsafe {
+                    self.builder.build_gep(ptr, &[offset], "ptrderef")
+                };
+                Ok(self.builder.build_load(ptr, "ptrderefres"))
+            },
+
+            Expr::Cast(value, typ) => {
+                let value = self.gen_code_node(value, env, bb)?;
+                let typ = self.get_llvm_type(typ);
+                if let BasicTypeEnum::PointerType(typ) = typ {
+                    if let BasicValueEnum::PointerValue(ptr) = value {
+                        Ok(self.builder.build_pointer_cast(ptr, typ, "ptrcast").as_basic_value_enum())
+                    } else {
+                        panic!()
+                    }
+                } else {
+                    panic!()
+                }
             },
 
             _ => unimplemented!()
@@ -328,9 +392,13 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Int => self.context.i64_type().as_basic_type_enum(),
             Type::Char => self.context.i8_type().as_basic_type_enum(),
-            Type::Ptr(ref typ) => {
-                let llvmtyp = self.get_llvm_type(typ.as_ref());
-                llvmtyp.ptr_type(inkwell::AddressSpace::Generic).as_basic_type_enum()
+            Type::Ptr(ref typ) => match typ.as_ref() {
+                Type::Void => self.context.i8_type()
+                    .ptr_type(inkwell::AddressSpace::Generic)
+                    .as_basic_type_enum(),
+                typ => self.get_llvm_type(typ)
+                    .ptr_type(inkwell::AddressSpace::Generic)
+                    .as_basic_type_enum()
             },
             _ => unimplemented!("{:?}", typ)
         }
@@ -343,4 +411,3 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         }
     }
 }
-

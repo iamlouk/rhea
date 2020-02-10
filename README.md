@@ -19,5 +19,14 @@ main := (): Int -> {
 If this is the contents of file `hello.rhea`, one
 could run it using: `cargo run -- --jit --input hello.rhea`.
 
+### TODO
+- [ ] Small Standard-Library written in Rust
+- [ ] Non-Mutable Variables
+- [ ] Something like Ownership
+- [ ] Custom Datatypes (Structs, Enums, ...)
+- [ ] Closures/Anonnymus Functions
+
+
+
 
 
