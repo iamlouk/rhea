@@ -8,11 +8,9 @@ use std::convert::TryInto;
 extern crate lalrpop_util;
 extern crate inkwell;
 
-#[macro_use]
-extern crate lazy_static;
-
 extern crate clap;
 
+mod lexer;
 mod ast;
 mod utils;
 mod codegen;
@@ -64,7 +62,8 @@ fn main() {
         }
     };
 
-    let mut prog: ast::Program = match parser::ProgramParser::new().parse(&input) {
+    let lexer = lexer::Lexer::new(&input);
+    let mut prog: ast::Program = match parser::ProgramParser::new().parse(&input, lexer) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error while parsing: {:?}", e);
@@ -125,9 +124,9 @@ fn main() {
         match vartypes.lookup("main") {
             Ok((ast::Type::Func(args, rettyp, is_vararg), _))
                 if is_vararg == false && args.len() == 0
-                && rettyp.as_ref() == &ast::Type::Int => (),
+                && rettyp.as_ref().resolve_type(&deftypes).unwrap() == ast::Type::Int => (),
             _ => {
-                eprintln!("your code needs a `main: (): Int` function to run in JIT-mode");
+                eprintln!("Internal Error: your code needs a `main: (): Int` function to run in JIT-mode");
                 std::process::exit(5);
             }
         }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use crate::utils;
 
@@ -36,14 +37,25 @@ impl<'input> Program<'input> {
                     vartypes.define(f.name.unwrap(), (f.get_type(), VarProp {
                         is_mutable: false,
                         is_extern: false
-                    }))?
+                    }))?,
+                Definition::Type(name, typ) => deftypes.define(name, typ.clone())?
             }
         }
 
+        let mut types: HashMap<&'input str, Type<'input>> = deftypes.take_bottom_scope().unwrap();
+        for (_, typ) in &mut types {
+            *typ = typ.resolve_type(deftypes)?;
+        }
+
+        deftypes.add_bottom_scope(types);
+
         for definition in &mut self.defs {
             match definition {
-                Definition::Function(f) => { f.check_type(vartypes, deftypes)?; },
-                Definition::Extern(_, _) => {}
+                Definition::Function(f) => {
+                    f.check_type(vartypes, deftypes)?;
+                },
+                Definition::Extern(_, _) => {},
+                Definition::Type(_, _) => {}
             }
         }
 
@@ -54,6 +66,7 @@ impl<'input> Program<'input> {
 #[derive(Debug)]
 pub enum Definition<'input> {
     Function(Function<'input>),
+    Type(&'input str, Type<'input>),
     Extern(&'input str, Type<'input>),
 }
 
@@ -63,12 +76,43 @@ pub enum Type<'input> {
     Real, Bool, Char,
     Struct(Arc<Vec<(&'input str, Type<'input>)>>),
     Tuple(Arc<Vec<Type<'input>>>), Ptr(Arc<Type<'input>>),
-    Unresolved(&'input str), Named(&'input str, Arc<Type<'input>>),
+    Unresolved(&'input str), // Named(&'input str, Arc<Type<'input>>),
     Func(Arc<Vec<Type<'input>>>, Arc<Type<'input>>, bool)
 }
 
-lazy_static! {
-    static ref CHAR_TYPE: Arc<Type<'static>> = Arc::new(Type::Char);
+impl<'input> Type<'input> {
+    /*
+     * TODO:
+     * Wenn man irgendwie den Inhalt eines Arc austauschen
+     * koennte (was man vermutlich kann, ich weiß nur nicht wie),
+     * dann koennte man diesen Code noch viel performanter machen!
+     */
+    pub fn resolve_type(&self, types: &utils::Env<'input, Type<'input>>)
+            -> Result<Type<'input>, utils::Error> {
+        match self {
+            Type::Struct(fields) => {
+                let mut fields = fields.as_ref().clone();
+                for pair in fields.iter_mut() {
+                    let newfield = pair.1.resolve_type(types)?;
+                    pair.1 = newfield;
+                }
+                Ok(Type::Struct(Arc::new(fields)))
+            },
+            Type::Tuple(_) => unimplemented!(),
+            Type::Func(args, rettype, attrs) => {
+                let mut args = args.as_ref().clone();
+                for arg in args.iter_mut() {
+                    let newarg = arg.resolve_type(types)?;
+                    *arg = newarg;
+                }
+
+                let rettype = rettype.as_ref().resolve_type(types)?;
+                Ok(Type::Func(Arc::new(args), Arc::new(rettype), *attrs))
+            },
+            Type::Unresolved(name) => types.lookup(name),
+            other => Ok(other.clone())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -93,7 +137,9 @@ impl<'input> Function<'input> {
         vartypes.push_scope();
         deftypes.push_scope();
 
-        for arg in &self.args {
+        for arg in &mut self.args {
+            arg.1 = arg.1.resolve_type(deftypes)?;
+
             vartypes.define(arg.0, (arg.1.clone(), VarProp {
                 is_extern: false,
                 is_mutable: false
@@ -101,6 +147,7 @@ impl<'input> Function<'input> {
         }
 
         let typ = self.body.check_type(vartypes, deftypes)?;
+        self.rettype = self.rettype.resolve_type(deftypes)?;
         if typ != self.rettype {
             eprintln!("func: {:?}, expected retrun type: {:?}, got: {:?}",
                 self.name.unwrap(), self.rettype, typ);
@@ -140,13 +187,14 @@ pub enum Expr<'input> {
     VarDef(&'input str, VarProp, Box<ExprNode<'input>>),
     Assign(Box<ExprNode<'input>>, Box<ExprNode<'input>>),
     Cast(Box<ExprNode<'input>>, Type<'input>),
-    PtrDeref(Box<ExprNode<'input>>, u32)
+    PtrDeref(Box<ExprNode<'input>>, u32),
+    Nop
 }
 
 #[derive(Clone)]
 pub struct Node<'input, T> {
     pub node: T,
-    pub typ: Type<'input>
+    typ: Type<'input>
 }
 
 impl<'input, T> Node<'input, T> {
@@ -162,10 +210,11 @@ impl<'input> Node<'input, Expr<'input>> {
         let typ = match &mut self.node {
             Expr::Identifier(id, ref mut props) => {
                 let (typ, varprops) = vartypes.lookup(id)?;
+                let typ = typ.resolve_type(deftypes)?;
                 *props = varprops;
                 typ
             },
-            Expr::StringLit(_) => Type::Ptr(CHAR_TYPE.clone()),
+            Expr::StringLit(_) => Type::Ptr(Arc::new(Type::Char)),
             Expr::IntLit(_) => Type::Int,
             Expr::RealLit(_) => Type::Real,
             Expr::BoolLit(_) => Type::Bool,
@@ -212,7 +261,7 @@ impl<'input> Node<'input, Expr<'input>> {
                 for (typ, arg) in argtypes.iter().zip(&mut argiter) {
                     let argtyp = arg.check_type(vartypes, deftypes)?;
                     if &argtyp != typ {
-                        panic!();
+                        panic!("{:?} != {:?}", argtyp, typ);
                     }
                 }
 
@@ -305,23 +354,27 @@ impl<'input> Node<'input, Expr<'input>> {
                 },
                 _ => panic!()
             },
-            Expr::Cast(value, typ) => match (value.check_type(vartypes, deftypes)?, typ) {
+            Expr::Cast(value, typ) => match (value.check_type(vartypes, deftypes)?, typ.resolve_type(deftypes)?) {
                 (Type::Ptr(_), Type::Ptr(totyp)) => Type::Ptr(totyp.clone()),
+                (a, b) if a == b => a,
                 _ => unimplemented!()
             },
             Expr::PtrDeref(ptrvalue, _) => match ptrvalue.check_type(vartypes, deftypes)? {
                 Type::Ptr(valtyp) => valtyp.as_ref().clone(),
                 _ => unimplemented!()
-            }
+            },
+            Expr::Nop => unimplemented!()
         };
 
         self.typ = typ.clone();
         Ok(typ)
     }
+
+    pub fn get_type(&self) -> Type { self.typ.clone() }
 }
 
 impl<'input, T: std::fmt::Debug> std::fmt::Debug for Node<'input, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.node)
+        write!(f, "({:?}: {:?})", self.node, self.typ)
     }
 }

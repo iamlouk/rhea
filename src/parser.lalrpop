@@ -1,7 +1,9 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::utils;
 use crate::ast::{self, Node};
+use carte::lexer::{self, Tok};
 
 grammar;
 
@@ -12,15 +14,19 @@ pub Program: ast::Program<'input> = {
 };
 
 Definition: ast::Definition<'input> = {
-	"extern" <id: Id> ":=" <args: VarArgs> ":" <rettype: Type> ";" => {
+	TYPE <id: Id> ASSIGN_NEW <typ: Type> SEMICOLON => {
+		ast::Definition::Type(id, typ)
+	},
+
+	EXTERN <id: Id> ASSIGN_NEW <args: VarArgs> COLON <rettype: Type> SEMICOLON => {
 		ast::Definition::Extern(id, ast::Type::Func(Arc::new(
 			args.into_iter().map(|e| e.1).collect()), Arc::new(rettype), true))
 	},
-	"extern" <id: Id> ":=" <args: Args> ":" <rettype: Type> ";" => {
+	EXTERN <id: Id> ASSIGN_NEW <args: Args> COLON <rettype: Type> SEMICOLON => {
 		ast::Definition::Extern(id, ast::Type::Func(Arc::new(
 			args.into_iter().map(|e| e.1).collect()), Arc::new(rettype), false))
 	},
-	<id: Id> ":=" <func: Function> ";" => {
+	<id: Id> ASSIGN_NEW <func: Function> SEMICOLON => {
 		let mut f = func.node;
 		f.name = Some(id);
 		ast::Definition::Function(f)
@@ -28,60 +34,60 @@ Definition: ast::Definition<'input> = {
 };
 
 Function: Box<Node<'input, ast::Function<'input>>> = {
-	<args: VarArgs> ":" <rettype: Type> "->" <body: Expr> => Node::new(ast::Function {
+	<args: VarArgs> COLON <rettype: Type> ARROW <body: Expr> => Node::new(ast::Function {
 		name: None, args: args, rettype: rettype, body: body, is_vararg: true
 	}),
-	<args: Args> ":" <rettype: Type> "->" <body: Expr> => Node::new(ast::Function {
+	<args: Args> COLON <rettype: Type> ARROW <body: Expr> => Node::new(ast::Function {
 		name: None, args: args, rettype: rettype, body: body, is_vararg: false
 	})
 };
 
 Expr: Box<Node<'input, ast::Expr<'input>>> = {
 	<a: Logic> => a,
-	"if" <cond: Logic> <block: Block> "else" <expr: Expr> =>
+	IF <cond: Logic> <block: Block> ELSE <expr: Expr> =>
 		Node::new(ast::Expr::If(cond, block, Some(expr))),
-	"if" <cond: Logic> <block: Block> => Node::new(ast::Expr::If(cond, block, None)),
-	"for" <cond: Logic> <block: Block> => Node::new(ast::Expr::For(None, cond, None, block)),
-	"for" <init: Expr> ";" <cond: Logic> ";" <inc: Expr> <block: Block> =>
+	IF <cond: Logic> <block: Block> => Node::new(ast::Expr::If(cond, block, None)),
+	FOR <cond: Logic> <block: Block> => Node::new(ast::Expr::For(None, cond, None, block)),
+	FOR <init: Expr> SEMICOLON <cond: Logic> SEMICOLON <inc: Expr> <block: Block> =>
 		Node::new(ast::Expr::For(Some(init), cond, Some(inc), block)),
-	"mut" <id: Id> ":=" <body: Expr> =>
+	MUT <id: Id> ASSIGN_NEW <body: Expr> =>
 		Node::new(ast::Expr::VarDef(id, ast::VarProp::mutable(), body)),
-	<id: Id> ":=" <body: Expr> =>
+	<id: Id> ASSIGN_NEW <body: Expr> =>
 		Node::new(ast::Expr::VarDef(id, ast::VarProp::default(), body)),
-	<lval: Logic> "=" <val: Expr> =>
+	<lval: Logic> ASSIGN <val: Expr> =>
 		Node::new(ast::Expr::Assign(lval, val))
 };
 
 Logic: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Logic> "&" <b: Condition> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::And, b)),
-	<a: Logic> "|" <b: Condition> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Or, b)),
+	<a: Logic> AND <b: Condition> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::And, b)),
+	<a: Logic> OR  <b: Condition> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Or, b)),
 	<a: Condition> => a
 };
 
 Condition: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Condition> "<" <b: Term> =>
+	<a: Condition> SMALLER <b: Term> =>
 		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Smaller, b)),
-	<a: Condition> "==" <b: Term> =>
+	<a: Condition> EQUAL   <b: Term> =>
 		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Equal, b)),
 	<a: Term> => a
 };
 
 Term: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Term> "+" <b: Factor> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Add, b)),
-	<a: Term> "-" <b: Factor> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Sub, b)),
+	<a: Term> ADD <b: Factor> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Add, b)),
+	<a: Term> SUB <b: Factor> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Sub, b)),
 	<a: Factor> => a
 };
 
 Factor: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Factor> "*" <b: Final> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Mul, b)),
-	<a: Factor> "/" <b: Final> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Div, b)),
+	<a: Factor> MUL <b: Final> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Mul, b)),
+	<a: Factor> DIV <b: Final> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Div, b)),
 	<a: Final> => a
 };
 
 Final: Box<Node<'input, ast::Expr<'input>>> = {
-	"(" <expr: Expr> ")" => expr, 
-	"*(" <expr: Expr> ")" => Node::new(ast::Expr::PtrDeref(expr, 0)),
-	"*" <id: Id> => Node::new(ast::Expr::PtrDeref(Node::new(
+	LBRACK <expr: Expr> RBRACK => expr, 
+	MUL LBRACK <expr: Expr> RBRACK => Node::new(ast::Expr::PtrDeref(expr, 0)),
+	MUL <id: Id> => Node::new(ast::Expr::PtrDeref(Node::new(
 		ast::Expr::Identifier(id, ast::VarProp::default())), 0)),
 	<lit:r#""[^"]*""#> => Node::new(ast::Expr::StringLit(lit)),
 	"0" => Node::new(ast::Expr::IntLit(0)),
@@ -93,7 +99,7 @@ Final: Box<Node<'input, ast::Expr<'input>>> = {
 		"false" => Node::new(ast::Expr::BoolLit(false)),
 		_ => Node::new(ast::Expr::Identifier(id, ast::VarProp::default()))
 	},
-	<arg: Final> "as" <typ: Type> => Node::new(ast::Expr::Cast(arg, typ)),
+	<arg: Final> AS <typ: Type> => Node::new(ast::Expr::Cast(arg, typ)),
 	<block: Block> => block
 };
 
@@ -108,11 +114,20 @@ Type: ast::Type<'input> = {
 			id => ast::Type::Unresolved(id)
 		}
 	},
-	"*" <typ: Type> => ast::Type::Ptr(Arc::new(typ))
+	MUL <typ: Type> => ast::Type::Ptr(Arc::new(typ)),
+	LCBRACK <fields: StructFields> RCBRACK => ast::Type::Struct(Arc::new(fields))
+};
+
+StructFields: Vec<(&'input str, ast::Type<'input>)> = {
+	<field0: Id> COLON <type0: Type> <fields: (COMMA Id COLON Type)*> => {
+		let mut structfields = vec![(field0, type0)];
+		for (_, name, _, typ) in fields { structfields.push((name, typ)); }
+		structfields
+	}
 };
 
 Args: Vec<(&'input str, ast::Type<'input>)> = {
-	"(" <arg0:(Id ":" Type)?> <args:("," Id ":" Type)*> ")" => match arg0 {
+	LBRACK <arg0:(Id COLON Type)?> <args:(COMMA Id COLON Type)*> RBRACK => match arg0 {
 		Some((i, _, t)) => {
 			let mut argvec = vec![(i, t)];
 			for (_, i, _, t) in args { argvec.push((i, t)); }
@@ -123,7 +138,8 @@ Args: Vec<(&'input str, ast::Type<'input>)> = {
 };
 
 VarArgs: Vec<(&'input str, ast::Type<'input>)> = {
-	"(" <arg0:(Id ":" Type)?> <args:("," Id ":" Type)*> (",")? "..." ")" => match arg0 {
+	LBRACK <arg0:(Id COLON Type)?> <args:(COMMA Id COLON Type)*> (COMMA)? DOTDOTDOT RBRACK
+		=> match arg0 {
 		Some((i, _, t)) => {
 			let mut argvec = vec![(i, t)];
 			for (_, i, _, t) in args { argvec.push((i, t)); }
@@ -134,8 +150,8 @@ VarArgs: Vec<(&'input str, ast::Type<'input>)> = {
 };
 
 Block: Box<Node<'input, ast::Expr<'input>>> = {
-	"{" "}" => ast::Node::new(ast::Expr::Block(vec![])),
-	"{" <arg0: Expr> <args: (";" Expr)*> (";")? "}" => {
+	LCBRACK RCBRACK => ast::Node::new(ast::Expr::Block(vec![])),
+	LCBRACK <arg0: Expr> <args: (SEMICOLON Expr)*> (SEMICOLON)? RCBRACK => {
 		let mut vec = vec![arg0];
 		for (_, arg) in args.into_iter() { vec.push(arg); }
 		ast::Node::new(ast::Expr::Block(vec.into_iter().map(|e| *e).collect()))
@@ -143,8 +159,8 @@ Block: Box<Node<'input, ast::Expr<'input>>> = {
 };
 
 Tuple: Vec<Node<'input, ast::Expr<'input>>> = {
-	"(" ")" => vec![],
-	"(" <arg0: Expr> <args: ("," Expr)*> ")" => {
+	LBRACK RBRACK => vec![],
+	LBRACK <arg0: Expr> <args: (COMMA Expr)*> RBRACK => {
 		let mut vec = vec![arg0];
 		for (_, arg) in args.into_iter() { vec.push(arg); }
 		vec.into_iter().map(|e| *e).collect()
@@ -154,3 +170,44 @@ Tuple: Vec<Node<'input, ast::Expr<'input>>> = {
 Id: &'input str = {
 	<id:r"[a-zA-Z_][a-zA-Z_0-9]*"> => id
 };
+
+extern {
+	type Location = usize;
+	type Error = utils::Error;
+
+	enum Tok<'input> {
+		LBRACK => Tok::LeftBracket,
+		RBRACK => Tok::RightBracket,
+		LCBRACK => Tok::LeftCurlyBracket,
+		RCBRACK => Tok::RightCurlyBracket,
+		ASSIGN => Tok::Assign,
+		ASSIGN_NEW => Tok::AssignNew,
+		DOTDOTDOT => Tok::DotDotDot,
+		COMMA => Tok::Comma,
+		COLON => Tok::Colon,
+		ARROW => Tok::Arrow,
+		SEMICOLON => Tok::Semicolon,
+		ADD => Tok::Add,
+		SUB => Tok::Sub,
+		MUL => Tok::Mul,
+		DIV => Tok::Div,
+		AND => Tok::And,
+		OR => Tok::Or,
+		EQUAL => Tok::Equal,
+		SMALLER => Tok::Smaller,
+		IF => Tok::If,
+		ELSE => Tok::Else,
+		FOR => Tok::For,
+		EXTERN => Tok::Extern,
+		MUT => Tok::Mut,
+		AS => Tok::As,
+		STRUCT => Tok::Struct,
+		TYPE => Tok::Type,
+		ID => Tok::Id(<&'input str>),
+		STR => Tok::Str(<&'input str>),
+		INT => Tok::Int(<i64>),
+		REAL => Tok::Real(<f64>),
+		BOOL => Tok::Bool(<bool>)
+	}
+}
+

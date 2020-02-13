@@ -38,7 +38,7 @@ impl<'input, T: Clone> Env<'input, T> {
         }
     }
 
-    pub fn lookup(&mut self, name: &'input str) -> Result<T, Error> {
+    pub fn lookup(&self, name: &'input str) -> Result<T, Error> {
         for scope in self.scopes.iter().rev() {
             match scope.get(name) {
                 Some(value) => return Ok(value.clone()),
@@ -46,6 +46,18 @@ impl<'input, T: Clone> Env<'input, T> {
             }
         }
         panic!(name.to_owned())
+    }
+
+    pub fn take_bottom_scope(&mut self) -> Option<HashMap<&'input str, T>> {
+        if self.scopes.len() == 0 {
+            None
+        } else {
+            Some(self.scopes.remove(0))
+        }
+    }
+
+    pub fn add_bottom_scope(&mut self, scope: HashMap<&'input str, T>) {
+        self.scopes.insert(0, scope);
     }
 }
 

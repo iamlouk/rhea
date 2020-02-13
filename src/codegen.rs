@@ -43,7 +43,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                         self.gen_func_def(name, argtypes, rettype, is_vararg)?;
                     },
                     _ => unimplemented!()
-                }
+                },
+                Definition::Type(_, _) => {}
             }
         }
         Ok(())
@@ -118,7 +119,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             },
 
             Expr::BinaryExpr(lhs, op, rhs) => {
-                if lhs.typ == Type::Bool && rhs.typ == Type::Bool
+                if lhs.get_type() == Type::Bool && rhs.get_type() == Type::Bool
                     && (op == &Operator::And || op == &Operator::Or) {
                     let lhsval = self.gen_code_node(lhs, env, bb)?;
                     let func = bb.get_parent().unwrap();
@@ -166,27 +167,27 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                     return Ok(phi.as_basic_value());
                 }
 
-                let (lhsval, lhstyp) = (self.gen_code_node(lhs, env, bb)?, &lhs.typ);
-                let (rhsval, rhstyp) = (self.gen_code_node(rhs, env, bb)?, &rhs.typ);
+                let (lhsval, lhstyp) = (self.gen_code_node(lhs, env, bb)?, lhs.get_type());
+                let (rhsval, rhstyp) = (self.gen_code_node(rhs, env, bb)?, rhs.get_type());
                 let res = match (lhstyp, op, rhstyp) {
-                    (&Type::Int, Operator::Add, &Type::Int) =>
+                    (Type::Int, Operator::Add, Type::Int) =>
                         BasicValueEnum::IntValue(
                             self.builder.build_int_add(
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "addres")),
-                    (&Type::Int, Operator::Sub, &Type::Int) =>
+                    (Type::Int, Operator::Sub, Type::Int) =>
                         BasicValueEnum::IntValue(
                             self.builder.build_int_sub(
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "subres")),
-                    (&Type::Int, Operator::Mul, &Type::Int) =>
+                    (Type::Int, Operator::Mul, Type::Int) =>
                         BasicValueEnum::IntValue(
                             self.builder.build_int_mul(
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "addres")),
-                    (&Type::Int, Operator::Div, &Type::Int) =>
+                    (Type::Int, Operator::Div, Type::Int) =>
                         BasicValueEnum::IntValue(
                             self.builder.build_int_signed_div(
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "subres")),
 
-                    (&Type::Ptr(_), Operator::Add, &Type::Int) => {
+                    (Type::Ptr(_), Operator::Add, Type::Int) => {
                         let (ptr, offset) = match (lhsval, rhsval) {
                             (BasicValueEnum::PointerValue(ptr), BasicValueEnum::IntValue(offset))
                                 => (ptr, offset),
@@ -200,12 +201,12 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                         ptr.as_basic_value_enum()
                     },
 
-                    (&Type::Int, Operator::Smaller, &Type::Int) =>
+                    (Type::Int, Operator::Smaller, Type::Int) =>
                         BasicValueEnum::IntValue(
                             self.builder.build_int_compare(
                                 inkwell::IntPredicate::SLT,
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "cmpres")),
-                    (&Type::Int, Operator::Equal, &Type::Int) =>
+                    (Type::Int, Operator::Equal, Type::Int) =>
                         BasicValueEnum::IntValue(
                             self.builder.build_int_compare(
                                 inkwell::IntPredicate::EQ,
@@ -257,8 +258,9 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 elsebb = self.builder.get_insert_block().unwrap();
 
                 self.builder.position_at_end(&donebb);
-                if node.typ != Type::Void {
-                    let phi = self.builder.build_phi(self.get_llvm_type(&node.typ), "phires");
+                let typ = node.get_type();
+                if typ != Type::Void {
+                    let phi = self.builder.build_phi(self.get_llvm_type(&typ), "phires");
                     let incomings: [(&dyn BasicValue<'ctx>, &BasicBlock); 2] = [
                         (&thenval, &thenbb),
                         (&elseval, &elsebb)
@@ -310,9 +312,9 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             },
 
             Expr::VarDef(name, VarProp { is_extern: _, is_mutable: true }, value) => {
-                let valtyp = &value.typ;
+                let valtyp = value.get_type();
                 let value = self.gen_code_node(value, env, bb)?;
-                let ptr = self.builder.build_alloca(self.get_llvm_type(valtyp), name);
+                let ptr = self.builder.build_alloca(self.get_llvm_type(&valtyp), name);
                 env.define(name, ptr.as_basic_value_enum())?;
                 self.builder.build_store(ptr, value);
                 Ok(value)

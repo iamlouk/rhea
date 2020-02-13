@@ -1,0 +1,15 @@
+type i := Int;
+
+extern puts := (str: *Char): Int;
+
+sum := (a: i, b: i): i -> {
+	res := a + b;
+	res
+};
+
+main := (): i -> {
+	puts("hello world");
+	zero := 0 as i;
+	sum(zero, 0)
+};
+
