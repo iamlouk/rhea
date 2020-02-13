@@ -217,9 +217,10 @@ impl<'input> Iterator for Lexer<'input> {
                         self.loc += 1;
                         match self.chars.next() {
                             Some(c) if c == endstringchar => {
-                                    self.chars.next();
-                                    self.loc += 1;
+                                self.chars.next();
+                                self.loc += 1;
                             },
+                            Some('n') | Some('t') => {},
                             _ => panic!()
                         }
                     }

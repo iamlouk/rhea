@@ -1,11 +1,8 @@
-use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::utils;
 use crate::ast::{self, Node};
-use carte::lexer::{self, Tok};
 
-grammar;
+grammar<'input>(input: &'input str);
 
 pub Program: ast::Program<'input> = {
 	<defs: (Definition)*> => {
@@ -85,20 +82,16 @@ Factor: Box<Node<'input, ast::Expr<'input>>> = {
 };
 
 Final: Box<Node<'input, ast::Expr<'input>>> = {
-	LBRACK <expr: Expr> RBRACK => expr, 
+	LBRACK <expr: Expr> RBRACK => expr,
 	MUL LBRACK <expr: Expr> RBRACK => Node::new(ast::Expr::PtrDeref(expr, 0)),
 	MUL <id: Id> => Node::new(ast::Expr::PtrDeref(Node::new(
 		ast::Expr::Identifier(id, ast::VarProp::default())), 0)),
-	<lit:r#""[^"]*""#> => Node::new(ast::Expr::StringLit(lit)),
-	"0" => Node::new(ast::Expr::IntLit(0)),
-	<lit:r"(-)?[0-9]+\.[0-9]+"> => Node::new(ast::Expr::RealLit(f64::from_str(lit).unwrap())),
-	<lit:r"(-)?[1-9][0-9]*"> => Node::new(ast::Expr::IntLit(i64::from_str(lit).unwrap())),
+	STR => Node::new(ast::Expr::StringLit(<>)),
+	REAL => Node::new(ast::Expr::RealLit(<>)),
+	INT => Node::new(ast::Expr::IntLit(<>)),
+	BOOL => Node::new(ast::Expr::BoolLit(<>)),
 	<callee: Final> <args: Tuple> => Node::new(ast::Expr::Call(callee, args)),
-	<id: Id> => match id {
-		"true" => Node::new(ast::Expr::BoolLit(true)),
-		"false" => Node::new(ast::Expr::BoolLit(false)),
-		_ => Node::new(ast::Expr::Identifier(id, ast::VarProp::default()))
-	},
+	<id: Id> => Node::new(ast::Expr::Identifier(<>, ast::VarProp::default())),
 	<arg: Final> AS <typ: Type> => Node::new(ast::Expr::Cast(arg, typ)),
 	<block: Block> => block
 };
@@ -167,47 +160,44 @@ Tuple: Vec<Node<'input, ast::Expr<'input>>> = {
 	}
 };
 
-Id: &'input str = {
-	<id:r"[a-zA-Z_][a-zA-Z_0-9]*"> => id
-};
+Id: &'input str = { ID => <> };
 
 extern {
 	type Location = usize;
-	type Error = utils::Error;
+	type Error = crate::utils::Error;
 
-	enum Tok<'input> {
-		LBRACK => Tok::LeftBracket,
-		RBRACK => Tok::RightBracket,
-		LCBRACK => Tok::LeftCurlyBracket,
-		RCBRACK => Tok::RightCurlyBracket,
-		ASSIGN => Tok::Assign,
-		ASSIGN_NEW => Tok::AssignNew,
-		DOTDOTDOT => Tok::DotDotDot,
-		COMMA => Tok::Comma,
-		COLON => Tok::Colon,
-		ARROW => Tok::Arrow,
-		SEMICOLON => Tok::Semicolon,
-		ADD => Tok::Add,
-		SUB => Tok::Sub,
-		MUL => Tok::Mul,
-		DIV => Tok::Div,
-		AND => Tok::And,
-		OR => Tok::Or,
-		EQUAL => Tok::Equal,
-		SMALLER => Tok::Smaller,
-		IF => Tok::If,
-		ELSE => Tok::Else,
-		FOR => Tok::For,
-		EXTERN => Tok::Extern,
-		MUT => Tok::Mut,
-		AS => Tok::As,
-		STRUCT => Tok::Struct,
-		TYPE => Tok::Type,
-		ID => Tok::Id(<&'input str>),
-		STR => Tok::Str(<&'input str>),
-		INT => Tok::Int(<i64>),
-		REAL => Tok::Real(<f64>),
-		BOOL => Tok::Bool(<bool>)
+	enum crate::lexer::Tok<'input> {
+		LBRACK => crate::lexer::Tok::LeftBracket,
+		RBRACK => crate::lexer::Tok::RightBracket,
+		LCBRACK => crate::lexer::Tok::LeftCurlyBracket,
+		RCBRACK => crate::lexer::Tok::RightCurlyBracket,
+		ASSIGN => crate::lexer::Tok::Assign,
+		ASSIGN_NEW => crate::lexer::Tok::AssignNew,
+		DOTDOTDOT => crate::lexer::Tok::DotDotDot,
+		COMMA => crate::lexer::Tok::Comma,
+		COLON => crate::lexer::Tok::Colon,
+		ARROW => crate::lexer::Tok::Arrow,
+		SEMICOLON => crate::lexer::Tok::Semicolon,
+		ADD => crate::lexer::Tok::Add,
+		SUB => crate::lexer::Tok::Sub,
+		MUL => crate::lexer::Tok::Mul,
+		DIV => crate::lexer::Tok::Div,
+		AND => crate::lexer::Tok::And,
+		OR => crate::lexer::Tok::Or,
+		EQUAL => crate::lexer::Tok::Equal,
+		SMALLER => crate::lexer::Tok::Smaller,
+		IF => crate::lexer::Tok::If,
+		ELSE => crate::lexer::Tok::Else,
+		FOR => crate::lexer::Tok::For,
+		EXTERN => crate::lexer::Tok::Extern,
+		MUT => crate::lexer::Tok::Mut,
+		AS => crate::lexer::Tok::As,
+		STRUCT => crate::lexer::Tok::Struct,
+		TYPE => crate::lexer::Tok::Type,
+		ID => crate::lexer::Tok::Id(<&'input str>),
+		STR => crate::lexer::Tok::Str(<&'input str>),
+		INT => crate::lexer::Tok::Int(<i64>),
+		REAL => crate::lexer::Tok::Real(<f64>),
+		BOOL => crate::lexer::Tok::Bool(<bool>)
 	}
 }
-

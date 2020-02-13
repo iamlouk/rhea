@@ -63,11 +63,7 @@ impl<'input, T: Clone> Env<'input, T> {
 
 pub fn unescape_parsed_string(raw: &str) -> Result<String, Error> {
     let mut string = String::with_capacity(raw.len());
-
     let mut chars = raw.chars();
-
-    chars.next();
-    chars.next_back();
 
     while let Some(c) = chars.next() {
         if c == '\\' {

@@ -114,7 +114,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 }
 
                 let string = utils::unescape_parsed_string(string)?;
-                let global = self.builder.build_global_string_ptr(string.as_str(), "global_string");
+                let global = self.builder.build_global_string_ptr(string.as_ref(), "global_string");
                 Ok(global.as_basic_value_enum())
             },
 
@@ -372,7 +372,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 let typ = self.get_llvm_type(typ);
                 if let BasicTypeEnum::PointerType(typ) = typ {
                     if let BasicValueEnum::PointerValue(ptr) = value {
-                        Ok(self.builder.build_pointer_cast(ptr, typ, "ptrcast").as_basic_value_enum())
+                        Ok(self.builder.build_pointer_cast(ptr, typ, "ptrcast")
+                           .as_basic_value_enum())
                     } else {
                         panic!()
                     }
