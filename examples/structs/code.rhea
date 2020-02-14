@@ -1,0 +1,36 @@
+extern printf := (fmt: *Char, ...): Int;
+extern malloc := (size: Int): *Void;
+extern free := (ptr: *Void): Void;
+
+type Point := { x: Int, y: Int, z: Int };
+
+add := (p1: *Point, p2: *Point): Void -> {
+	p1->x   = (*p1).x + (*p2).x;
+	(*p1).y =   p1->y + (*p2).y;
+	(*p1).z = (*p1).z +   p2->z;
+};
+
+set := (p: *Point, x: Int, y: Int, z: Int): Void -> {
+	(*p).x = x;
+	(*p).y = y;
+	(*p).z = z;
+};
+
+newPoint := (x: Int, y: Int, z: Int): *Point -> {
+	p := malloc(8 * 3) as *Point;
+	set(p, x, y, z);
+	p
+};
+
+main := (): Int -> {
+	a := newPoint(1, 2, 3);
+	b := newPoint(2, 3, 4);
+
+	add(a, b);
+
+	printf("%d\n%d\n%d\n", (*a).x, (*a).y, (*a).z);
+	free(a as *Void);
+	free(b as *Void);
+	0
+};
+

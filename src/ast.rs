@@ -18,7 +18,7 @@ pub struct VarProp {
 
 impl VarProp {
     pub fn default() -> Self { VarProp { is_mutable: false, is_extern: false } }
-    pub fn mutable() -> Self { VarProp { is_mutable: true, is_extern: false } }
+    pub fn mutable() -> Self { VarProp { is_mutable: true,  is_extern: false } }
 }
 
 impl<'input> Program<'input> {
@@ -70,7 +70,7 @@ pub enum Definition<'input> {
     Extern(&'input str, Type<'input>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type<'input> {
     Untyped, Void, Int,
     Real, Bool, Char,
@@ -110,6 +110,8 @@ impl<'input> Type<'input> {
                 Ok(Type::Func(Arc::new(args), Arc::new(rettype), *attrs))
             },
             Type::Unresolved(name) => types.lookup(name),
+            Type::Ptr(typ) => Ok(Type::Ptr(Arc::new(
+                typ.as_ref().clone().resolve_type(types)?))),
             other => Ok(other.clone())
         }
     }
@@ -174,6 +176,7 @@ pub enum Expr<'input> {
     IntLit(i64),
     RealLit(f64),
     BoolLit(bool),
+    StructLit(&'input str, Vec<(&'input str, ExprNode<'input>)>),
     BinaryExpr(Box<ExprNode<'input>>, Operator, Box<ExprNode<'input>>),
     Call(Box<ExprNode<'input>>, Vec<ExprNode<'input>>),
     If(Box<ExprNode<'input>>,
@@ -188,6 +191,7 @@ pub enum Expr<'input> {
     Assign(Box<ExprNode<'input>>, Box<ExprNode<'input>>),
     Cast(Box<ExprNode<'input>>, Type<'input>),
     PtrDeref(Box<ExprNode<'input>>, u32),
+    StructFieldAccess(Box<ExprNode<'input>>, &'input str),
     Nop
 }
 
@@ -218,6 +222,9 @@ impl<'input> Node<'input, Expr<'input>> {
             Expr::IntLit(_) => Type::Int,
             Expr::RealLit(_) => Type::Real,
             Expr::BoolLit(_) => Type::Bool,
+            Expr::StructLit(name, fields) => {
+                unimplemented!()
+            },
             Expr::BinaryExpr(ref mut lhs, op, ref mut rhs) => {
                 let lhs = lhs.check_type(vartypes, deftypes)?;
                 let rhs = rhs.check_type(vartypes, deftypes)?;
@@ -316,6 +323,7 @@ impl<'input> Node<'input, Expr<'input>> {
             },
             Expr::VarDef(name, props, value) => {
                 let typ = value.check_type(vartypes, deftypes)?;
+                let typ = typ.resolve_type(deftypes)?;
                 if typ == Type::Void {
                     panic!()
                 } else {
@@ -352,9 +360,28 @@ impl<'input> Node<'input, Expr<'input>> {
                         panic!()
                     }
                 },
+                Expr::StructFieldAccess(structval, field) => {
+                    let fields = match structval.check_type(vartypes, deftypes)? {
+                        Type::Struct(fields) => fields,
+                        other => panic!("Not a struct: {:?}", other)
+                    };
+
+                    let fieldtyp = match fields.iter().find(|&pair| &pair.0 == field) {
+                        Some((_, typ)) => typ,
+                        None => panic!()
+                    };
+
+                    let valtyp = value.check_type(vartypes, deftypes)?;
+                    if &valtyp != fieldtyp {
+                        panic!()
+                    }
+
+                    Type::Void
+                },
                 _ => panic!()
             },
-            Expr::Cast(value, typ) => match (value.check_type(vartypes, deftypes)?, typ.resolve_type(deftypes)?) {
+            Expr::Cast(value, typ) => match (value.check_type(vartypes, deftypes)?,
+                                             typ.resolve_type(deftypes)?) {
                 (Type::Ptr(_), Type::Ptr(totyp)) => Type::Ptr(totyp.clone()),
                 (a, b) if a == b => a,
                 _ => unimplemented!()
@@ -363,6 +390,17 @@ impl<'input> Node<'input, Expr<'input>> {
                 Type::Ptr(valtyp) => valtyp.as_ref().clone(),
                 _ => unimplemented!()
             },
+            Expr::StructFieldAccess(structval, field) => {
+                let fields = match structval.check_type(vartypes, deftypes)? {
+                    Type::Struct(fields) => fields,
+                    _ => panic!()
+                };
+
+                match fields.iter().find(|&pair| &pair.0 == field) {
+                    Some((_, typ)) => typ.clone(),
+                    None => panic!()
+                }
+            },
             Expr::Nop => unimplemented!()
         };
 
@@ -370,7 +408,7 @@ impl<'input> Node<'input, Expr<'input>> {
         Ok(typ)
     }
 
-    pub fn get_type(&self) -> Type { self.typ.clone() }
+    pub fn get_type(&self) -> Type<'input> { self.typ.clone() }
 }
 
 impl<'input, T: std::fmt::Debug> std::fmt::Debug for Node<'input, T> {

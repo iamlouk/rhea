@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::ast::{self, Node};
+use crate::lexer::Tok;
 
 grammar<'input>(input: &'input str);
 
@@ -31,81 +32,87 @@ Definition: ast::Definition<'input> = {
 };
 
 Function: Box<Node<'input, ast::Function<'input>>> = {
-	<args: VarArgs> COLON <rettype: Type> ARROW <body: Expr> => Node::new(ast::Function {
+	<args: VarArgs> COLON <rettype: Type> ARROW <body: Expr0> => Node::new(ast::Function {
 		name: None, args: args, rettype: rettype, body: body, is_vararg: true
 	}),
-	<args: Args> COLON <rettype: Type> ARROW <body: Expr> => Node::new(ast::Function {
+	<args: Args> COLON <rettype: Type> ARROW <body: Expr0> => Node::new(ast::Function {
 		name: None, args: args, rettype: rettype, body: body, is_vararg: false
 	})
 };
 
-Expr: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Logic> => a,
-	IF <cond: Logic> <block: Block> ELSE <expr: Expr> =>
+Expr0: Box<Node<'input, ast::Expr<'input>>> = {
+	<a: Expr1> => a,
+	IF <cond: Expr1> <block: Block> ELSE <expr: Expr0> =>
 		Node::new(ast::Expr::If(cond, block, Some(expr))),
-	IF <cond: Logic> <block: Block> => Node::new(ast::Expr::If(cond, block, None)),
-	FOR <cond: Logic> <block: Block> => Node::new(ast::Expr::For(None, cond, None, block)),
-	FOR <init: Expr> SEMICOLON <cond: Logic> SEMICOLON <inc: Expr> <block: Block> =>
+	IF <cond: Expr1> <block: Block> => Node::new(ast::Expr::If(cond, block, None)),
+	FOR <cond: Expr1> <block: Block> => Node::new(ast::Expr::For(None, cond, None, block)),
+	FOR <init: Expr0> SEMICOLON <cond: Expr1> SEMICOLON <inc: Expr0> <block: Block> =>
 		Node::new(ast::Expr::For(Some(init), cond, Some(inc), block)),
-	MUT <id: Id> ASSIGN_NEW <body: Expr> =>
+	MUT <id: Id> ASSIGN_NEW <body: Expr0> =>
 		Node::new(ast::Expr::VarDef(id, ast::VarProp::mutable(), body)),
-	<id: Id> ASSIGN_NEW <body: Expr> =>
+	<id: Id> ASSIGN_NEW <body: Expr0> =>
 		Node::new(ast::Expr::VarDef(id, ast::VarProp::default(), body)),
-	<lval: Logic> ASSIGN <val: Expr> =>
+	<lval: Expr1> ASSIGN <val: Expr0> =>
 		Node::new(ast::Expr::Assign(lval, val))
 };
 
-Logic: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Logic> AND <b: Condition> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::And, b)),
-	<a: Logic> OR  <b: Condition> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Or, b)),
-	<a: Condition> => a
+Expr1: Box<Node<'input, ast::Expr<'input>>> = {
+	<a: Expr1> AND <b: Expr2> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::And, b)),
+	<a: Expr1> OR  <b: Expr2> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Or, b)),
+	<a: Expr2> => a
 };
 
-Condition: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Condition> SMALLER <b: Term> =>
+Expr2: Box<Node<'input, ast::Expr<'input>>> = {
+	<a: Expr2> SMALLER <b: Expr3> =>
 		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Smaller, b)),
-	<a: Condition> EQUAL   <b: Term> =>
+	<a: Expr2> EQUAL   <b: Expr3> =>
 		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Equal, b)),
-	<a: Term> => a
+	<a: Expr3> => a
 };
 
-Term: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Term> ADD <b: Factor> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Add, b)),
-	<a: Term> SUB <b: Factor> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Sub, b)),
-	<a: Factor> => a
+Expr3: Box<Node<'input, ast::Expr<'input>>> = {
+	<a: Expr3> ADD <b: Expr4> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Add, b)),
+	<a: Expr3> SUB <b: Expr4> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Sub, b)),
+	<a: Expr4> => a
 };
 
-Factor: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Factor> MUL <b: Final> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Mul, b)),
-	<a: Factor> DIV <b: Final> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Div, b)),
-	<a: Final> => a
+Expr4: Box<Node<'input, ast::Expr<'input>>> = {
+	<a: Expr4> MUL <b: Expr5> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Mul, b)),
+	<a: Expr4> DIV <b: Expr5> => Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Div, b)),
+	<a: Expr5> => a
 };
 
-Final: Box<Node<'input, ast::Expr<'input>>> = {
-	LBRACK <expr: Expr> RBRACK => expr,
-	MUL LBRACK <expr: Expr> RBRACK => Node::new(ast::Expr::PtrDeref(expr, 0)),
+Expr5: Box<Node<'input, ast::Expr<'input>>> = {
+	MUL LBRACK <expr: Expr0> RBRACK => Node::new(ast::Expr::PtrDeref(expr, 0)),
 	MUL <id: Id> => Node::new(ast::Expr::PtrDeref(Node::new(
 		ast::Expr::Identifier(id, ast::VarProp::default())), 0)),
-	STR => Node::new(ast::Expr::StringLit(<>)),
-	REAL => Node::new(ast::Expr::RealLit(<>)),
-	INT => Node::new(ast::Expr::IntLit(<>)),
-	BOOL => Node::new(ast::Expr::BoolLit(<>)),
-	<callee: Final> <args: Tuple> => Node::new(ast::Expr::Call(callee, args)),
+	<callee: Expr5> <args: Tuple> => Node::new(ast::Expr::Call(callee, args)),
+	<structval: Expr5> DOT <field: Id> =>
+		Node::new(ast::Expr::StructFieldAccess(structval, field)),
+	<arg: Expr5> AS <typ: Type> => Node::new(ast::Expr::Cast(arg, typ)),
+	<lhs: Expr5> ARROW <field: Id> => Node::new(ast::Expr::StructFieldAccess(
+		Node::new(ast::Expr::PtrDeref(lhs, 0)), field)),
+	<expr: Expr6> => expr
+};
+
+Expr6: Box<Node<'input, ast::Expr<'input>>> = {
+	LBRACK <expr: Expr0> RBRACK => expr,
+	BOOL     => Node::new(ast::Expr::BoolLit(<>)),
+	INT      => Node::new(ast::Expr::IntLit(<>)),
+	REAL     => Node::new(ast::Expr::RealLit(<>)),
+	STR      => Node::new(ast::Expr::StringLit(<>)),
 	<id: Id> => Node::new(ast::Expr::Identifier(<>, ast::VarProp::default())),
-	<arg: Final> AS <typ: Type> => Node::new(ast::Expr::Cast(arg, typ)),
 	<block: Block> => block
 };
 
 Type: ast::Type<'input> = {
-	<id: Id> => {
-		match id {
-			"Real" => ast::Type::Real,
-			"Bool" => ast::Type::Bool,
-			"Int" => ast::Type::Int,
-			"Char" => ast::Type::Char,
-			"Void" => ast::Type::Void,
-			id => ast::Type::Unresolved(id)
-		}
+	<id: Id> => match id {
+		"Real" => ast::Type::Real,
+		"Bool" => ast::Type::Bool,
+		"Int" => ast::Type::Int,
+		"Char" => ast::Type::Char,
+		"Void" => ast::Type::Void,
+		id => ast::Type::Unresolved(id)
 	},
 	MUL <typ: Type> => ast::Type::Ptr(Arc::new(typ)),
 	LCBRACK <fields: StructFields> RCBRACK => ast::Type::Struct(Arc::new(fields))
@@ -144,7 +151,7 @@ VarArgs: Vec<(&'input str, ast::Type<'input>)> = {
 
 Block: Box<Node<'input, ast::Expr<'input>>> = {
 	LCBRACK RCBRACK => ast::Node::new(ast::Expr::Block(vec![])),
-	LCBRACK <arg0: Expr> <args: (SEMICOLON Expr)*> (SEMICOLON)? RCBRACK => {
+	LCBRACK <arg0: Expr0> <args: (SEMICOLON Expr0)*> (SEMICOLON)? RCBRACK => {
 		let mut vec = vec![arg0];
 		for (_, arg) in args.into_iter() { vec.push(arg); }
 		ast::Node::new(ast::Expr::Block(vec.into_iter().map(|e| *e).collect()))
@@ -153,7 +160,7 @@ Block: Box<Node<'input, ast::Expr<'input>>> = {
 
 Tuple: Vec<Node<'input, ast::Expr<'input>>> = {
 	LBRACK RBRACK => vec![],
-	LBRACK <arg0: Expr> <args: (COMMA Expr)*> RBRACK => {
+	LBRACK <arg0: Expr0> <args: (COMMA Expr0)*> RBRACK => {
 		let mut vec = vec![arg0];
 		for (_, arg) in args.into_iter() { vec.push(arg); }
 		vec.into_iter().map(|e| *e).collect()
@@ -166,38 +173,39 @@ extern {
 	type Location = usize;
 	type Error = crate::utils::Error;
 
-	enum crate::lexer::Tok<'input> {
-		LBRACK => crate::lexer::Tok::LeftBracket,
-		RBRACK => crate::lexer::Tok::RightBracket,
-		LCBRACK => crate::lexer::Tok::LeftCurlyBracket,
-		RCBRACK => crate::lexer::Tok::RightCurlyBracket,
-		ASSIGN => crate::lexer::Tok::Assign,
-		ASSIGN_NEW => crate::lexer::Tok::AssignNew,
-		DOTDOTDOT => crate::lexer::Tok::DotDotDot,
-		COMMA => crate::lexer::Tok::Comma,
-		COLON => crate::lexer::Tok::Colon,
-		ARROW => crate::lexer::Tok::Arrow,
-		SEMICOLON => crate::lexer::Tok::Semicolon,
-		ADD => crate::lexer::Tok::Add,
-		SUB => crate::lexer::Tok::Sub,
-		MUL => crate::lexer::Tok::Mul,
-		DIV => crate::lexer::Tok::Div,
-		AND => crate::lexer::Tok::And,
-		OR => crate::lexer::Tok::Or,
-		EQUAL => crate::lexer::Tok::Equal,
-		SMALLER => crate::lexer::Tok::Smaller,
-		IF => crate::lexer::Tok::If,
-		ELSE => crate::lexer::Tok::Else,
-		FOR => crate::lexer::Tok::For,
-		EXTERN => crate::lexer::Tok::Extern,
-		MUT => crate::lexer::Tok::Mut,
-		AS => crate::lexer::Tok::As,
-		STRUCT => crate::lexer::Tok::Struct,
-		TYPE => crate::lexer::Tok::Type,
-		ID => crate::lexer::Tok::Id(<&'input str>),
-		STR => crate::lexer::Tok::Str(<&'input str>),
-		INT => crate::lexer::Tok::Int(<i64>),
-		REAL => crate::lexer::Tok::Real(<f64>),
-		BOOL => crate::lexer::Tok::Bool(<bool>)
+	enum Tok<'input> {
+		LBRACK     => Tok::LeftBracket,
+		RBRACK     => Tok::RightBracket,
+		LCBRACK    => Tok::LeftCurlyBracket,
+		RCBRACK    => Tok::RightCurlyBracket,
+		ASSIGN     => Tok::Assign,
+		ASSIGN_NEW => Tok::AssignNew,
+		DOTDOTDOT  => Tok::DotDotDot,
+		DOT        => Tok::Dot,
+		COMMA      => Tok::Comma,
+		COLON      => Tok::Colon,
+		ARROW      => Tok::Arrow,
+		SEMICOLON  => Tok::Semicolon,
+		ADD        => Tok::Add,
+		SUB        => Tok::Sub,
+		MUL        => Tok::Mul,
+		DIV        => Tok::Div,
+		AND        => Tok::And,
+		OR         => Tok::Or,
+		EQUAL      => Tok::Equal,
+		SMALLER    => Tok::Smaller,
+		IF         => Tok::If,
+		ELSE       => Tok::Else,
+		FOR        => Tok::For,
+		EXTERN     => Tok::Extern,
+		MUT        => Tok::Mut,
+		AS         => Tok::As,
+		STRUCT     => Tok::Struct,
+		TYPE       => Tok::Type,
+		ID         => Tok::Id(<&'input str>),
+		STR        => Tok::Str(<&'input str>),
+		INT        => Tok::Int(<i64>),
+		REAL       => Tok::Real(<f64>),
+		BOOL       => Tok::Bool(<bool>)
 	}
 }

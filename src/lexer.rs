@@ -18,9 +18,8 @@ pub enum Tok<'input> {
     LeftSquareBracket, RightSquareBracket,
     LeftCurlyBracket, RightCurlyBracket,
 
-    Assign, AssignNew, DotDotDot,
+    Assign, AssignNew, Dot, DotDotDot,
     Comma, Colon, Arrow, Semicolon,
-
     Add, Sub, Mul, Div,
     And, Or, Equal, Smaller,
 
@@ -31,7 +30,7 @@ pub struct Lexer<'input> {
     chars: Peekable<Chars<'input>>,
     input: &'input str,
     loc: usize,
-    line: u16
+    line: usize
 }
 
 impl<'input> Lexer<'input> {
@@ -43,12 +42,8 @@ impl<'input> Lexer<'input> {
             line: 1
         }
     }
-}
 
-impl<'input> Iterator for Lexer<'input> {
-    type Item = Spanned<Tok<'input>, usize, utils::Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn skip_whitespace(&mut self) -> Option<char> {
         let c;
         loop {
             self.loc += 1;
@@ -56,53 +51,61 @@ impl<'input> Iterator for Lexer<'input> {
                 Some(' ') => continue,
                 Some('\t') => continue,
                 Some('\n') => continue,
+                Some('#') => {
+                    if self.chars.peek() == Some(&'*') {
+                        self.chars.next();
+                        self.loc += 1;
+                        while let Some(c) = self.chars.next() {
+                            self.loc += 1;
+                            if c == '*' && self.chars.peek() == Some(&'#') {
+                                self.loc += 1;
+                                self.chars.next();
+                                break;
+                            }
+                            if c == '\n' { self.line += 1; }
+                        }
+                    } else {
+                        while let Some(c) = self.chars.next() {
+                            self.loc += 1;
+                            if c == '\n' { break; }
+                        }
+                        self.line += 1;
+                    }
+                    continue;
+                },
                 Some(c) => c,
                 None => return None
             };
+
             break;
         }
+        Some(c)
+    }
+}
 
+impl<'input> Iterator for Lexer<'input> {
+    type Item = Spanned<Tok<'input>, usize, utils::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let c = match self.skip_whitespace() {
+            Some(c) => c,
+            None => return None
+        };
         match c {
-            '#' => {
-                if self.chars.peek() == Some(&'*') {
-                    self.chars.next();
-                    self.loc += 1;
-                    while let Some(c) = self.chars.next() {
-                        self.loc += 1;
-                        if c == '*' && self.chars.peek() == Some(&'#') {
-                            self.loc += 1;
-                            self.chars.next();
-                            break;
-                        }
-
-                        if c == '\n' { self.line += 1; }
-                    }
-                } else {
-                    while let Some(c) = self.chars.next() {
-                        self.loc += 1;
-                        if c == '\n' {
-                            break;
-                        }
-                    }
-                    self.line += 1;
-                }
-                self.next()
-            },
-
-            '(' => Some(Ok((self.loc - 1, Tok::LeftBracket, self.loc))),
-            ')' => Some(Ok((self.loc - 1, Tok::RightBracket, self.loc))),
-            '[' => Some(Ok((self.loc - 1, Tok::LeftSquareBracket, self.loc))),
+            '(' => Some(Ok((self.loc - 1, Tok::LeftBracket,        self.loc))),
+            ')' => Some(Ok((self.loc - 1, Tok::RightBracket,       self.loc))),
+            '[' => Some(Ok((self.loc - 1, Tok::LeftSquareBracket,  self.loc))),
             ']' => Some(Ok((self.loc - 1, Tok::RightSquareBracket, self.loc))),
-            '{' => Some(Ok((self.loc - 1, Tok::LeftCurlyBracket, self.loc))),
-            '}' => Some(Ok((self.loc - 1, Tok::RightCurlyBracket, self.loc))),
+            '{' => Some(Ok((self.loc - 1, Tok::LeftCurlyBracket,   self.loc))),
+            '}' => Some(Ok((self.loc - 1, Tok::RightCurlyBracket,  self.loc))),
 
-            '+' => Some(Ok((self.loc - 1, Tok::Add, self.loc))),
-            '*' => Some(Ok((self.loc - 1, Tok::Mul, self.loc))),
-            '/' => Some(Ok((self.loc - 1, Tok::Div, self.loc))),
-            '|' => Some(Ok((self.loc - 1, Tok::Or, self.loc))),
-            '&' => Some(Ok((self.loc - 1, Tok::And, self.loc))),
-            '<' => Some(Ok((self.loc - 1, Tok::Smaller, self.loc))),
-            ',' => Some(Ok((self.loc - 1, Tok::Comma, self.loc))),
+            '+' => Some(Ok((self.loc - 1, Tok::Add,       self.loc))),
+            '*' => Some(Ok((self.loc - 1, Tok::Mul,       self.loc))),
+            '/' => Some(Ok((self.loc - 1, Tok::Div,       self.loc))),
+            '|' => Some(Ok((self.loc - 1, Tok::Or,        self.loc))),
+            '&' => Some(Ok((self.loc - 1, Tok::And,       self.loc))),
+            '<' => Some(Ok((self.loc - 1, Tok::Smaller,   self.loc))),
+            ',' => Some(Ok((self.loc - 1, Tok::Comma,     self.loc))),
             ';' => Some(Ok((self.loc - 1, Tok::Semicolon, self.loc))),
 
             ':' => {
@@ -145,7 +148,7 @@ impl<'input> Iterator for Lexer<'input> {
                         panic!()
                     }
                 } else {
-                    panic!()
+                    Some(Ok((self.loc - 1, Tok::Dot, self.loc)))
                 }
             },
 
@@ -161,18 +164,18 @@ impl<'input> Iterator for Lexer<'input> {
                 }
 
                 let id = &self.input[start..self.loc];
-                match id.as_ref() {
-                    "extern" => Some(Ok((start, Tok::Extern, self.loc))),
-                    "if"     => Some(Ok((start, Tok::If, self.loc))),
-                    "else"   => Some(Ok((start, Tok::Else, self.loc))),
-                    "for"    => Some(Ok((start, Tok::For, self.loc))),
-                    "true"   => Some(Ok((start, Tok::Bool(true), self.loc))),
+                match id {
+                    "extern" => Some(Ok((start, Tok::Extern,      self.loc))),
+                    "if"     => Some(Ok((start, Tok::If,          self.loc))),
+                    "else"   => Some(Ok((start, Tok::Else,        self.loc))),
+                    "for"    => Some(Ok((start, Tok::For,         self.loc))),
+                    "true"   => Some(Ok((start, Tok::Bool(true),  self.loc))),
                     "false"  => Some(Ok((start, Tok::Bool(false), self.loc))),
-                    "mut"    => Some(Ok((start, Tok::Mut, self.loc))),
-                    "as"     => Some(Ok((start, Tok::As, self.loc))),
-                    "struct" => Some(Ok((start, Tok::Struct, self.loc))),
-                    "type"   => Some(Ok((start, Tok::Type, self.loc))),
-                    _        => Some(Ok((start, Tok::Id(id), self.loc)))
+                    "mut"    => Some(Ok((start, Tok::Mut,         self.loc))),
+                    "as"     => Some(Ok((start, Tok::As,          self.loc))),
+                    "struct" => Some(Ok((start, Tok::Struct,      self.loc))),
+                    "type"   => Some(Ok((start, Tok::Type,        self.loc))),
+                    _        => Some(Ok((start, Tok::Id(id),      self.loc)))
                 }
             },
 
@@ -182,7 +185,7 @@ impl<'input> Iterator for Lexer<'input> {
                 while let Some(c) = self.chars.peek().map(|c| *c) {
                     match c {
                         '0'..='9' => { self.loc += 1; },
-                        '.' => {
+                        '.' if is_real == false => {
                             is_real = true;
                             self.loc += 1;
                         },

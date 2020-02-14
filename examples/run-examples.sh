@@ -3,7 +3,7 @@
 cd "$(dirname "$(readlink -f $0)")"
 
 cd ..
-cargo build
+cargo build --quiet
 cd ./examples
 
 NC='\033[0m'
@@ -13,25 +13,25 @@ GREEN='\033[0;32m'
 
 RHEA="../target/debug/rhea"
 
+if [ "$1" = "--silent" ]; then
+	SILENT=true
+fi
+
 i=0
 for dir in ./*/; do
 	if [ -d $dir ]; then
 		i=$(($i + 1))
-		printf "${CYAN}test #${i}:${NC} $(basename $dir)\n"
+		[ -z $SILENT ] && printf "${CYAN}test #${i}:${NC} $(basename $dir)\n"
 
-		$RHEA --jit --input "$dir/code.rhea" | diff "$dir/expected_output.txt" -
+		$RHEA --jit --input "$dir/code.rhea" 2>&1 | diff "$dir/expected_output.txt" -
 		if [ $? -ne 0 ]; then
-			printf "${RED}wrong exit code or output (test: $dir)${NC}\n"
+			[ -z $SILENT ] && printf "${RED}wrong exit code or output (${dir})${NC}\n"
 			exit 1
 		fi
-
-		# diff "$dir/expected_output.txt" "$dir/actual_output.txt"
-		# if [ $? -ne 0 ]; then
-		#	printf "${RED}wrong output (test; $dir)${NC}\n"
-		#	exit 1
-		# fi
 	fi
 done
 
-printf "${GREEN}SUCCESS:${NC} All Tests passed!\n"
+[ -z $SILENT ] && printf "${GREEN}SUCCESS:${NC} All Tests passed!\n"
+
+exit 0
 

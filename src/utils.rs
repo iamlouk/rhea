@@ -15,6 +15,7 @@ impl std::fmt::Display for Error {
     }
 }
 
+#[derive(Debug)]
 pub struct Env<'input, T: Clone> {
     scopes: Vec<HashMap<&'input str, T>>
 }

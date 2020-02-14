@@ -1,6 +1,7 @@
 use crate::ast::{Program, Function, Node, Expr, Definition, Type, Operator, VarProp};
 use crate::utils;
 
+use std::convert::TryInto;
 use std::collections::HashMap;
 
 use inkwell::builder::Builder;
@@ -15,7 +16,8 @@ pub struct CodeGen<'ctx, 'input> {
     context: &'ctx Context,
     pub module: Module<'ctx>,
     builder: Builder<'ctx>,
-    strings: HashMap<&'input str, inkwell::values::GlobalValue<'ctx>>
+    strings: HashMap<&'input str, inkwell::values::GlobalValue<'ctx>>,
+    structs: HashMap<Type<'input>, inkwell::types::StructType<'ctx>>
 }
 
 impl<'ctx, 'input> CodeGen<'ctx, 'input> {
@@ -24,13 +26,46 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             context: llvm_context,
             module: llvm_context.create_module(modulename),
             builder: llvm_context.create_builder(),
-            strings: HashMap::new()
+            strings: HashMap::new(),
+            structs: HashMap::new()
         }
     }
 
     pub fn dump_to_stdout(&self) {
         let modstr = self.module.print_to_string().to_string();
         println!("{}", modstr);
+    }
+
+    fn get_struct_type(&mut self, structtyp: &Type<'input>)
+            -> inkwell::types::StructType<'ctx> {
+        if let Some(res) = self.structs.get(&structtyp) {
+            return res.clone();
+        }
+
+        let fields = match structtyp {
+            Type::Struct(fields) => fields.as_ref(),
+            _ => panic!()
+        };
+
+        let fields: Vec<_> = fields
+            .iter().map(|(_, typ)| self.get_llvm_type(&typ))
+            .collect();
+
+        let llvmstruct = self.context.struct_type(&fields, false);
+        self.structs.insert(structtyp.clone(), llvmstruct);
+        self.structs.get(structtyp).unwrap().clone()
+    }
+
+    fn get_struct_offset(&self, fields: &Vec<(&'input str, Type<'input>)>,
+                         field: &'input str) -> Result<u32, utils::Error> {
+        let idx = fields.iter()
+            .enumerate()
+            .find(|(_, (name, _))| name == &field)
+            .map(|(i, _)| i).unwrap()
+            .try_into().unwrap();
+
+        // println!("{:?}[{:?}] -> {:?}", fields, field, idx);
+        Ok(idx)
     }
 
     pub fn gen_code(&mut self, program: &Program<'input>) -> Result<(), utils::Error> {
@@ -74,6 +109,12 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         env.push_scope();
         for i in 0..function.args.len() {
             let param = llvmfn.get_nth_param(i as u32).unwrap();
+            match param {
+                BasicValueEnum::IntValue(val) => val.set_name(function.args[i].0),
+                BasicValueEnum::StructValue(val) => val.set_name(function.args[i].0),
+                BasicValueEnum::PointerValue(val) => val.set_name(function.args[i].0),
+                _ => {}
+            }
             env.define(function.args[i].0, param)?;
         }
 
@@ -260,7 +301,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 self.builder.position_at_end(&donebb);
                 let typ = node.get_type();
                 if typ != Type::Void {
-                    let phi = self.builder.build_phi(self.get_llvm_type(&typ), "phires");
+                    let llvmtyp = self.get_llvm_type(&typ);
+                    let phi = self.builder.build_phi(llvmtyp, "phires");
                     let incomings: [(&dyn BasicValue<'ctx>, &BasicBlock); 2] = [
                         (&thenval, &thenbb),
                         (&elseval, &elsebb)
@@ -314,7 +356,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
             Expr::VarDef(name, VarProp { is_extern: _, is_mutable: true }, value) => {
                 let valtyp = value.get_type();
                 let value = self.gen_code_node(value, env, bb)?;
-                let ptr = self.builder.build_alloca(self.get_llvm_type(&valtyp), name);
+                let llvmtyp = self.get_llvm_type(&valtyp);
+                let ptr = self.builder.build_alloca(llvmtyp, name);
                 env.define(name, ptr.as_basic_value_enum())?;
                 self.builder.build_store(ptr, value);
                 Ok(value)
@@ -338,38 +381,65 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 },
                 Expr::PtrDeref(lval, offset) => {
                     let value = self.gen_code_node(value, env, bb)?;
-                    let ptr = match self.gen_code_node(&lval, env, bb)? {
+                    let mut ptr = match self.gen_code_node(&lval, env, bb)? {
                         BasicValueEnum::PointerValue(ptr) => ptr,
                         _ => panic!()
                     };
 
-                    let offset = self.context.i64_type().const_int(*offset as u64, false);
-                    let ptr = unsafe {
-                        self.builder.build_gep(ptr, &[offset], "ptrderef")
-                    };
-                    self.builder.build_store(ptr, value);
+                    if *offset != 0 {
+                        let offset = self.context.i64_type().const_int(*offset as u64, false);
+                        ptr = unsafe { self.builder.build_gep(ptr, &[offset], "") };
+                    }
 
+                    self.builder.build_store(ptr, value);
+                    Ok(value)
+                },
+                Expr::StructFieldAccess(structval, field) => {
+                    let value = self.gen_code_node(value, env, bb)?;
+                    let typ = structval.get_type();
+                    let fields = match typ {
+                        Type::Struct(ref fields) => fields.as_ref(),
+                        _ => panic!()
+                    };
+                    let offset = self.get_struct_offset(fields, field)?;
+                    if let Expr::PtrDeref(ptr, 0) = &structval.node {
+                        let ptr = match self.gen_code_node(&ptr, env, bb)? {
+                            BasicValueEnum::PointerValue(ptr) => ptr,
+                            _ => panic!()
+                        };
+       
+                        let ptr = unsafe { self.builder.build_struct_gep(ptr, offset, "") };
+                        self.builder.build_store(ptr, value);
+                    } else {
+                        let structval = match self.gen_code_node(structval, env, bb)? {
+                            BasicValueEnum::StructValue(structval) => structval,
+                            _ => panic!()
+                        };
+                        self.builder.build_insert_value(structval, value, offset, "").unwrap();
+                    }
                     Ok(value)
                 },
                 _ => panic!()
             },
 
             Expr::PtrDeref(lval, offset) => {
-                let ptr = match self.gen_code_node(lval, env, bb)? {
+                let mut ptr = match self.gen_code_node(lval, env, bb)? {
                     BasicValueEnum::PointerValue(ptr) => ptr,
                     _ => panic!()
                 };
 
-                let offset = self.context.i64_type().const_int(*offset as u64, false);
-                let ptr = unsafe {
-                    self.builder.build_gep(ptr, &[offset], "ptrderef")
-                };
-                Ok(self.builder.build_load(ptr, "ptrderefres"))
+                if *offset != 0 {
+                    let offset = self.context.i64_type().const_int(*offset as u64, false);
+                    ptr = unsafe { self.builder.build_gep(ptr, &[offset], "") };
+                }
+
+                Ok(self.builder.build_load(ptr, ""))
             },
 
-            Expr::Cast(value, typ) => {
+            Expr::Cast(value, _) => {
+                let valtyp = value.get_type();
                 let value = self.gen_code_node(value, env, bb)?;
-                let typ = self.get_llvm_type(typ);
+                let typ = self.get_llvm_type(&node.get_type());
                 if let BasicTypeEnum::PointerType(typ) = typ {
                     if let BasicValueEnum::PointerValue(ptr) = value {
                         Ok(self.builder.build_pointer_cast(ptr, typ, "ptrcast")
@@ -377,9 +447,27 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                     } else {
                         panic!()
                     }
+                } else if valtyp == node.get_type() {
+                    Ok(value)
                 } else {
                     panic!()
                 }
+            },
+
+            Expr::StructFieldAccess(structval, field) => {
+                let typ = structval.get_type();
+                let fields = match typ {
+                    Type::Struct(ref fields) => fields.as_ref(),
+                    _ => panic!()
+                };
+                let offset = self.get_struct_offset(fields, field)?;
+                let structval = match self.gen_code_node(structval, env, bb)? {
+                    BasicValueEnum::StructValue(structval) => structval,
+                    _ => panic!()
+                };
+                Ok(self.builder
+                   .build_extract_value(structval, offset, "")
+                   .unwrap())
             },
 
             _ => unimplemented!()
@@ -390,7 +478,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         BasicValueEnum::IntValue(self.context.i64_type().const_zero())
     }
 
-    fn get_llvm_type(&self, typ: &Type) -> BasicTypeEnum<'ctx> {
+    fn get_llvm_type(&mut self, typ: &Type<'input>) -> BasicTypeEnum<'ctx> {
         match *typ {
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Int => self.context.i64_type().as_basic_type_enum(),
@@ -403,6 +491,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                     .ptr_type(inkwell::AddressSpace::Generic)
                     .as_basic_type_enum()
             },
+            Type::Struct(_) => self.get_struct_type(typ).as_basic_type_enum(),
             _ => unimplemented!("{:?}", typ)
         }
     }

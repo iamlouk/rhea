@@ -16,6 +16,60 @@ mod utils;
 mod codegen;
 lalrpop_mod!(pub parser);
 
+fn run_optimizations(module: &inkwell::module::Module) -> bool {
+    use inkwell::OptimizationLevel::Aggressive;
+    use inkwell::passes::{PassManager, PassManagerBuilder};
+    use inkwell::targets::{InitializationConfig, Target};
+
+    let config = InitializationConfig::default();
+    Target::initialize_native(&config).unwrap();
+
+    let pass_manager_builder = PassManagerBuilder::create();
+    pass_manager_builder.set_optimization_level(Aggressive);
+
+    let pm = PassManager::create(());
+    pass_manager_builder.populate_module_pass_manager(&pm);
+
+    pm.run_on(module)
+}
+
+fn run_jit<'input>(module: &inkwell::module::Module,
+                   vartypes: &utils::Env<'input, (ast::Type<'input>, ast::VarProp)>,
+                   deftypes: &utils::Env<'input, ast::Type<'input>>) -> i64 {
+    use inkwell::OptimizationLevel;
+
+    match vartypes.lookup("main") {
+        Ok((ast::Type::Func(args, rettyp, is_vararg), _))
+            if is_vararg == false && args.len() == 0
+            && rettyp.as_ref().resolve_type(&deftypes).unwrap() == ast::Type::Int => (),
+        _ => {
+            eprintln!("Internal Error: your code needs a `main: (): Int` \
+                       function to run in JIT-mode");
+            std::process::exit(5);
+        }
+    }
+
+    let execution_engine = match module
+            .create_jit_execution_engine(OptimizationLevel::Default) {
+        Ok(ee) => ee,
+        Err(e) => {
+            eprintln!("LLVM-Jit-Error: {}", e.to_string());
+            std::process::exit(5);
+        }
+    };
+
+    let mainfn = match unsafe { execution_engine
+        .get_function::<unsafe extern "C" fn() -> i64>("main") } {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("LLVM-Jit-Error: {}", e.to_string());
+                std::process::exit(5);
+            }
+    };
+
+    unsafe { mainfn.call() }
+}
+
 fn main() {
     let matches = clap::App::new("RHEA Programming Language Compiler + JIT")
         .version("0.1.0")
@@ -31,7 +85,8 @@ fn main() {
              .short("o")
              .long("output")
              .value_name("file")
-             .help("path to file where llvm-bitcode should be stored, optional if `--jit` or `--dump` is selected")
+             .help("path to file where llvm-bitcode should be stored, \
+                   optional if `--jit` or `--dump` is selected")
              .required_unless_one(&["dump", "jit"])
              .takes_value(true)
              .multiple(false))
@@ -80,29 +135,13 @@ fn main() {
 
     let llvm_context = inkwell::context::Context::create();
     let mut codegen = codegen::CodeGen::new(&llvm_context, "stdin");
-
     if let Err(e) = codegen.gen_code(&prog) {
         eprintln!("Error while generating code: {}", e);
         std::process::exit(3);
     }
 
-    if matches.is_present("optimize") {
-        use inkwell::OptimizationLevel::Aggressive;
-        use inkwell::passes::{PassManager, PassManagerBuilder};
-        use inkwell::targets::{InitializationConfig, Target};
-
-        let config = InitializationConfig::default();
-        Target::initialize_native(&config).unwrap();
-
-        let pass_manager_builder = PassManagerBuilder::create();
-        pass_manager_builder.set_optimization_level(Aggressive);
-
-        let pm = PassManager::create(());
-        pass_manager_builder.populate_module_pass_manager(&pm);
-
-        if pm.run_on(&codegen.module) == false {
-            eprintln!("No optimizations applied :(");
-        }
+    if matches.is_present("optimize") && !run_optimizations(&codegen.module) {
+        eprintln!("No optimizations applied :(");
     }
 
     if matches.is_present("dump") {
@@ -119,37 +158,7 @@ fn main() {
     }
 
     if matches.is_present("jit") {
-        use inkwell::OptimizationLevel;
-
-        match vartypes.lookup("main") {
-            Ok((ast::Type::Func(args, rettyp, is_vararg), _))
-                if is_vararg == false && args.len() == 0
-                && rettyp.as_ref().resolve_type(&deftypes).unwrap() == ast::Type::Int => (),
-            _ => {
-                eprintln!("Internal Error: your code needs a `main: (): Int` function to run in JIT-mode");
-                std::process::exit(5);
-            }
-        }
-
-        let execution_engine = match codegen.module
-                .create_jit_execution_engine(OptimizationLevel::Default) {
-            Ok(ee) => ee,
-            Err(e) => {
-                eprintln!("LLVM-Jit-Error: {}", e.to_string());
-                std::process::exit(5);
-            }
-        };
-
-        let mainfn = match unsafe { execution_engine
-            .get_function::<unsafe extern "C" fn() -> i64>("main") } {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("LLVM-Jit-Error: {}", e.to_string());
-                    std::process::exit(5);
-                }
-        };
-
-        let res = unsafe { mainfn.call() };
+        let res = run_jit(&codegen.module, &vartypes, &deftypes);
         if matches.is_present("dump") {
             eprintln!("-> {}", res);
         }

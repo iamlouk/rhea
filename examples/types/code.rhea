@@ -1,4 +1,5 @@
 type i := Int;
+type Pair := { a: Int, b: Int };
 
 extern puts := (str: *Char): Int;
 
