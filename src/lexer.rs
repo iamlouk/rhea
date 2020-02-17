@@ -1,4 +1,3 @@
-
 use crate::utils;
 
 pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
@@ -23,7 +22,7 @@ pub enum Tok<'input> {
     Add, Sub, Mul, Div,
     And, Or, Equal, Smaller,
 
-    If, Else, For, Extern, Mut, As, Struct, Type
+    If, Else, Then, For, Extern, Mut, As, Struct, Type
 }
 
 pub struct Lexer<'input> {
@@ -154,7 +153,7 @@ impl<'input> Iterator for Lexer<'input> {
 
             'A'..='Z' | 'a'..='z' | '_' => {
                 let start = self.loc - 1;
-                while let Some(c) = self.chars.peek().map(|c| *c) {
+                while let Some(c) = self.chars.peek().copied() {
                     match c {
                         'A'..='Z' | 'a'..='z' | '_' | '0'..='9' => {},
                         _ => { break; }
@@ -168,6 +167,7 @@ impl<'input> Iterator for Lexer<'input> {
                     "extern" => Some(Ok((start, Tok::Extern,      self.loc))),
                     "if"     => Some(Ok((start, Tok::If,          self.loc))),
                     "else"   => Some(Ok((start, Tok::Else,        self.loc))),
+                    "then"   => Some(Ok((start, Tok::Then,        self.loc))),
                     "for"    => Some(Ok((start, Tok::For,         self.loc))),
                     "true"   => Some(Ok((start, Tok::Bool(true),  self.loc))),
                     "false"  => Some(Ok((start, Tok::Bool(false), self.loc))),
@@ -182,10 +182,10 @@ impl<'input> Iterator for Lexer<'input> {
             '0'..='9' => {
                 let start = self.loc - 1;
                 let mut is_real = false;
-                while let Some(c) = self.chars.peek().map(|c| *c) {
+                while let Some(c) = self.chars.peek().copied() {
                     match c {
                         '0'..='9' => { self.loc += 1; },
-                        '.' if is_real == false => {
+                        '.' if !is_real => {
                             is_real = true;
                             self.loc += 1;
                         },
@@ -198,12 +198,12 @@ impl<'input> Iterator for Lexer<'input> {
                 if is_real {
                     match num.parse::<f64>() {
                         Ok(num) => Some(Ok((start, Tok::Real(num), self.loc))),
-                        Err(_)  => panic!()
+                        Err(e)  => Some(lexer_err!("parsing {:?} as f64 failed: {}", num, e))
                     }
                 } else {
                     match num.parse::<i64>() {
                         Ok(num) => Some(Ok((start, Tok::Int(num), self.loc))),
-                        Err(_)  => panic!()
+                        Err(e)  => Some(lexer_err!("parsing {:?} as i64 failed: {}", num, e))
                     }
                 }
             },
@@ -242,7 +242,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lexer_test() {
+    fn tokens() {
         let input = "( hallo 3.14 +* \"abc \\\" xyz\" / welt)
             123 'test' #blablbalba\n: := ->'hallo'
             #* bla bla bla *# ... end".to_owned();

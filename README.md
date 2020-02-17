@@ -21,12 +21,7 @@ could run it using: `cargo run -- --jit --input hello.rhea`.
 
 ### TODO
 - [ ] Small Standard-Library written in Rust
-- [ ] Non-Mutable Variables
 - [ ] Something like Ownership
-- [ ] Custom Datatypes (Structs, Enums, ...)
+- [ ] More Custom Datatypes (Enums, ...)
 - [ ] Closures/Anonnymus Functions
-
-
-
-
 

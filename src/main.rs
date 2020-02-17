@@ -7,14 +7,14 @@ use std::convert::TryInto;
 #[macro_use]
 extern crate lalrpop_util;
 extern crate inkwell;
-
 extern crate clap;
 
+#[macro_use]
+mod utils;
 mod lexer;
 mod ast;
-mod utils;
 mod codegen;
-lalrpop_mod!(pub parser);
+lalrpop_mod!(#[allow(clippy::all)] parser);
 
 fn run_optimizations(module: &inkwell::module::Module) -> bool {
     use inkwell::OptimizationLevel::Aggressive;
@@ -40,7 +40,7 @@ fn run_jit<'input>(module: &inkwell::module::Module,
 
     match vartypes.lookup("main") {
         Ok((ast::Type::Func(args, rettyp, is_vararg), _))
-            if is_vararg == false && args.len() == 0
+            if !is_vararg && args.len() == 0
             && rettyp.as_ref().resolve_type(&deftypes).unwrap() == ast::Type::Int => (),
         _ => {
             eprintln!("Internal Error: your code needs a `main: (): Int` \

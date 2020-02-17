@@ -1,3 +1,4 @@
+City: New York (x: 1, y: 2, z: 3)
 3
 5
 7

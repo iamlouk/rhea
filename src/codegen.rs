@@ -39,7 +39,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
     fn get_struct_type(&mut self, structtyp: &Type<'input>)
             -> inkwell::types::StructType<'ctx> {
         if let Some(res) = self.structs.get(&structtyp) {
-            return res.clone();
+            return *res;
         }
 
         let fields = match structtyp {
@@ -53,10 +53,10 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
 
         let llvmstruct = self.context.struct_type(&fields, false);
         self.structs.insert(structtyp.clone(), llvmstruct);
-        self.structs.get(structtyp).unwrap().clone()
+        *self.structs.get(structtyp).unwrap()
     }
 
-    fn get_struct_offset(&self, fields: &Vec<(&'input str, Type<'input>)>,
+    fn get_struct_offset(&self, fields: &[(&'input str, Type<'input>)],
                          field: &'input str) -> Result<u32, utils::Error> {
         let idx = fields.iter()
             .enumerate()
@@ -73,8 +73,8 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         for def in &program.defs {
             match def {
                 Definition::Function(f) => self.gen_code_func(&f, &mut env)?,
-                Definition::Extern(name, ref typ) => match typ {
-                    &Type::Func(ref argtypes, ref rettype, is_vararg) => {
+                Definition::Extern(name, ref typ) => match *typ {
+                    Type::Func(ref argtypes, ref rettype, is_vararg) => {
                         self.gen_func_def(name, argtypes, rettype, is_vararg)?;
                     },
                     _ => unimplemented!()
@@ -85,7 +85,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         Ok(())
     }
 
-    fn gen_func_def(&mut self, name: &'input str, argtypes: &Vec<Type<'input>>,
+    fn gen_func_def(&mut self, name: &'input str, argtypes: &[Type<'input>],
             rettype: &Type<'input>, is_vararg: bool)
             -> Result<inkwell::values::FunctionValue<'ctx>, utils::Error> {
         let llvmargtypes: Vec<_> = argtypes.iter().map(|arg| self.get_llvm_type(arg)).collect();
@@ -102,7 +102,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 env: &mut utils::Env<'input, BasicValueEnum<'ctx>>)
                 -> Result<(), utils::Error> {
 
-        let args = function.args.iter().map(|arg| arg.1.clone()).collect();
+        let args: Vec<_> = function.args.iter().map(|arg| arg.1.clone()).collect();
         let llvmfn = self.gen_func_def(function.name.unwrap(),
             &args, &function.rettype, function.is_vararg)?;
 
@@ -131,13 +131,14 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
         Ok(())
     }
 
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     fn gen_code_node(&mut self, node: &Node<'input, Expr<'input>>,
             env: &mut utils::Env<'input, BasicValueEnum<'ctx>>, bb: &BasicBlock)
             -> Result<BasicValueEnum<'ctx>, utils::Error> {
         match &node.node {
-            Expr::Identifier(id, VarProp { is_extern: _, is_mutable: false }) => env.lookup(id),
+            Expr::Identifier(id, VarProp { is_mutable: false, .. }) => env.lookup(id),
 
-            Expr::Identifier(id, VarProp { is_extern: _, is_mutable: true }) => {
+            Expr::Identifier(id, VarProp { is_mutable: true, .. }) => {
                 let ptr = match env.lookup(id)? {
                     BasicValueEnum::PointerValue(ptr) => ptr,
                     _ => panic!()
@@ -157,6 +158,39 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 let string = utils::unescape_parsed_string(string)?;
                 let global = self.builder.build_global_string_ptr(string.as_ref(), "global_string");
                 Ok(global.as_basic_value_enum())
+            },
+
+            Expr::StructLit(_, fields) => {
+                let typ = node.get_type();
+                let structfields = match typ {
+                    Type::Struct(ref fields) => fields.as_ref(),
+                    _ => panic!()
+                };
+                /* Wieso funktioniert das nicht?
+
+                let llvmstruct = self.get_struct_type(&typ).const_zero();
+
+                for (field, value) in fields {
+                    println!("{:?} -> {:?}", field, value);
+                    let value = self.gen_code_node(value, env, bb)?;
+                    let offset = self.get_struct_offset(structfields, field)?;
+                    self.builder.build_insert_value(llvmstruct, value, offset, "");
+                }
+
+                Ok(llvmstruct.as_basic_value_enum())
+                */
+
+                let llvmtyp = self.get_struct_type(&typ);
+                let ptr = self.builder.build_alloca(llvmtyp, "");
+
+                for (field, value) in fields {
+                    let value = self.gen_code_node(value, env, bb)?;
+                    let offset = self.get_struct_offset(structfields, field)?;
+                    let ptr = unsafe { self.builder.build_struct_gep(ptr, offset, "") };
+                    self.builder.build_store(ptr, value);
+                }
+
+                Ok(self.builder.build_load(ptr, ""))
             },
 
             Expr::BinaryExpr(lhs, op, rhs) => {
@@ -353,7 +387,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 Ok(retval)
             },
 
-            Expr::VarDef(name, VarProp { is_extern: _, is_mutable: true }, value) => {
+            Expr::VarDef(name, VarProp { is_mutable: true, .. }, value) => {
                 let valtyp = value.get_type();
                 let value = self.gen_code_node(value, env, bb)?;
                 let llvmtyp = self.get_llvm_type(&valtyp);
@@ -363,14 +397,14 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 Ok(value)
             },
 
-            Expr::VarDef(name, VarProp { is_extern: _, is_mutable: false }, value) => {
+            Expr::VarDef(name, VarProp { is_mutable: false, .. }, value) => {
                 let value = self.gen_code_node(value, env, bb)?;
                 env.define(name, value)?;
                 Ok(value)
             },
 
             Expr::Assign(lval, value) => match &(*lval).node {
-                Expr::Identifier(name, VarProp { is_extern: _, is_mutable: true }) => {
+                Expr::Identifier(name, VarProp { is_mutable: true, .. }) => {
                     let value = self.gen_code_node(value, env, bb)?;
                     let ptr = match env.lookup(name)? {
                         BasicValueEnum::PointerValue(ptr) => ptr,
@@ -407,7 +441,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                             BasicValueEnum::PointerValue(ptr) => ptr,
                             _ => panic!()
                         };
-       
+
                         let ptr = unsafe { self.builder.build_struct_gep(ptr, offset, "") };
                         self.builder.build_store(ptr, value);
                     } else {

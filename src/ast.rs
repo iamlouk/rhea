@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::collections::HashMap;
 
 use crate::utils;
 
@@ -42,13 +41,6 @@ impl<'input> Program<'input> {
             }
         }
 
-        let mut types: HashMap<&'input str, Type<'input>> = deftypes.take_bottom_scope().unwrap();
-        for (_, typ) in &mut types {
-            *typ = typ.resolve_type(deftypes)?;
-        }
-
-        deftypes.add_bottom_scope(types);
-
         for definition in &mut self.defs {
             match definition {
                 Definition::Function(f) => {
@@ -75,7 +67,7 @@ pub enum Type<'input> {
     Untyped, Void, Int,
     Real, Bool, Char,
     Struct(Arc<Vec<(&'input str, Type<'input>)>>),
-    Tuple(Arc<Vec<Type<'input>>>), Ptr(Arc<Type<'input>>),
+    Ptr(Arc<Type<'input>>),
     Unresolved(&'input str), // Named(&'input str, Arc<Type<'input>>),
     Func(Arc<Vec<Type<'input>>>, Arc<Type<'input>>, bool)
 }
@@ -98,7 +90,6 @@ impl<'input> Type<'input> {
                 }
                 Ok(Type::Struct(Arc::new(fields)))
             },
-            Type::Tuple(_) => unimplemented!(),
             Type::Func(args, rettype, attrs) => {
                 let mut args = args.as_ref().clone();
                 for arg in args.iter_mut() {
@@ -191,8 +182,7 @@ pub enum Expr<'input> {
     Assign(Box<ExprNode<'input>>, Box<ExprNode<'input>>),
     Cast(Box<ExprNode<'input>>, Type<'input>),
     PtrDeref(Box<ExprNode<'input>>, u32),
-    StructFieldAccess(Box<ExprNode<'input>>, &'input str),
-    Nop
+    StructFieldAccess(Box<ExprNode<'input>>, &'input str)
 }
 
 #[derive(Clone)]
@@ -223,7 +213,24 @@ impl<'input> Node<'input, Expr<'input>> {
             Expr::RealLit(_) => Type::Real,
             Expr::BoolLit(_) => Type::Bool,
             Expr::StructLit(name, fields) => {
-                unimplemented!()
+                let typ = deftypes.lookup(name)?.resolve_type(deftypes)?;
+                let typfields = match &typ {
+                    Type::Struct(fields) => fields.as_ref(),
+                    _ => panic!("not a struct: {:?}", name)
+                };
+
+                for (field, value) in fields {
+                    let fieldtyp = typfields.iter()
+                        .find(|(fieldname, _)| fieldname == field)
+                        .map(|(_, typ)| typ).unwrap();
+
+                    let valuetyp = value.check_type(vartypes, deftypes)?;
+                    if fieldtyp != &valuetyp {
+                        panic!()
+                    }
+                }
+
+                typ
             },
             Expr::BinaryExpr(ref mut lhs, op, ref mut rhs) => {
                 let lhs = lhs.check_type(vartypes, deftypes)?;
@@ -242,10 +249,8 @@ impl<'input> Node<'input, Expr<'input>> {
 
                     (&Type::Ptr(_), Operator::Add, Type::Int) => lhs,
 
-                    (a, op, b) => {
-                        println!("{:?} {:?} {:?}", a, op, b);
-                        panic!();
-                    }
+                    (a, op, b) =>
+                        unimplemented!("{:?} {:?} {:?}", a, op, b)
                 }
             },
             Expr::Call(ref mut callee, ref mut args) => {
@@ -339,7 +344,7 @@ impl<'input> Node<'input, Expr<'input>> {
                         panic!();
                     }
 
-                    if varprops.is_mutable == false {
+                    if !varprops.is_mutable {
                         panic!();
                     }
 
@@ -400,8 +405,7 @@ impl<'input> Node<'input, Expr<'input>> {
                     Some((_, typ)) => typ.clone(),
                     None => panic!()
                 }
-            },
-            Expr::Nop => unimplemented!()
+            }
         };
 
         self.typ = typ.clone();

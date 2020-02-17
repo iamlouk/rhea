@@ -15,7 +15,6 @@ Definition: ast::Definition<'input> = {
 	TYPE <id: Id> ASSIGN_NEW <typ: Type> SEMICOLON => {
 		ast::Definition::Type(id, typ)
 	},
-
 	EXTERN <id: Id> ASSIGN_NEW <args: VarArgs> COLON <rettype: Type> SEMICOLON => {
 		ast::Definition::Extern(id, ast::Type::Func(Arc::new(
 			args.into_iter().map(|e| e.1).collect()), Arc::new(rettype), true))
@@ -33,27 +32,32 @@ Definition: ast::Definition<'input> = {
 
 Function: Box<Node<'input, ast::Function<'input>>> = {
 	<args: VarArgs> COLON <rettype: Type> ARROW <body: Expr0> => Node::new(ast::Function {
-		name: None, args: args, rettype: rettype, body: body, is_vararg: true
-	}),
+		name: None, args: args, rettype: rettype, body: body, is_vararg: true }),
 	<args: Args> COLON <rettype: Type> ARROW <body: Expr0> => Node::new(ast::Function {
-		name: None, args: args, rettype: rettype, body: body, is_vararg: false
-	})
+		name: None, args: args, rettype: rettype, body: body, is_vararg: false })
 };
 
 Expr0: Box<Node<'input, ast::Expr<'input>>> = {
-	<a: Expr1> => a,
-	IF <cond: Expr1> <block: Block> ELSE <expr: Expr0> =>
-		Node::new(ast::Expr::If(cond, block, Some(expr))),
-	IF <cond: Expr1> <block: Block> => Node::new(ast::Expr::If(cond, block, None)),
-	FOR <cond: Expr1> <block: Block> => Node::new(ast::Expr::For(None, cond, None, block)),
+	<expr: Expr1>                         => expr,
+	<ifexpr: IfExpr>                      => ifexpr,
+	FOR <cond: Expr1> <block: Block>      => Node::new(ast::Expr::For(None, cond, None, block)),
 	FOR <init: Expr0> SEMICOLON <cond: Expr1> SEMICOLON <inc: Expr0> <block: Block> =>
 		Node::new(ast::Expr::For(Some(init), cond, Some(inc), block)),
 	MUT <id: Id> ASSIGN_NEW <body: Expr0> =>
 		Node::new(ast::Expr::VarDef(id, ast::VarProp::mutable(), body)),
-	<id: Id> ASSIGN_NEW <body: Expr0> =>
+	<id: Id> ASSIGN_NEW <body: Expr0>     =>
 		Node::new(ast::Expr::VarDef(id, ast::VarProp::default(), body)),
-	<lval: Expr1> ASSIGN <val: Expr0> =>
+	<lval: Expr1> ASSIGN <val: Expr0>     =>
 		Node::new(ast::Expr::Assign(lval, val))
+};
+
+IfExpr: Box<Node<'input, ast::Expr<'input>>> = {
+	IF <cond: Expr1> <block: Block> =>
+		Node::new(ast::Expr::If(cond, block, None)),
+	IF <cond: Expr1> <block: Block> ELSE <elseblock: Block> =>
+		Node::new(ast::Expr::If(cond, block, Some(elseblock))),
+	IF <cond: Expr1> <block: Block> ELSE <elseblock: IfExpr> =>
+		Node::new(ast::Expr::If(cond, block, Some(elseblock)))
 };
 
 Expr1: Box<Node<'input, ast::Expr<'input>>> = {
@@ -86,22 +90,23 @@ Expr5: Box<Node<'input, ast::Expr<'input>>> = {
 	MUL LBRACK <expr: Expr0> RBRACK => Node::new(ast::Expr::PtrDeref(expr, 0)),
 	MUL <id: Id> => Node::new(ast::Expr::PtrDeref(Node::new(
 		ast::Expr::Identifier(id, ast::VarProp::default())), 0)),
-	<callee: Expr5> <args: Tuple> => Node::new(ast::Expr::Call(callee, args)),
+
+	<callee: Expr5> <args: CallArgs> => Node::new(ast::Expr::Call(callee, args)),
 	<structval: Expr5> DOT <field: Id> =>
 		Node::new(ast::Expr::StructFieldAccess(structval, field)),
+
 	<arg: Expr5> AS <typ: Type> => Node::new(ast::Expr::Cast(arg, typ)),
 	<lhs: Expr5> ARROW <field: Id> => Node::new(ast::Expr::StructFieldAccess(
 		Node::new(ast::Expr::PtrDeref(lhs, 0)), field)),
-	<expr: Expr6> => expr
-};
 
-Expr6: Box<Node<'input, ast::Expr<'input>>> = {
 	LBRACK <expr: Expr0> RBRACK => expr,
 	BOOL     => Node::new(ast::Expr::BoolLit(<>)),
 	INT      => Node::new(ast::Expr::IntLit(<>)),
 	REAL     => Node::new(ast::Expr::RealLit(<>)),
 	STR      => Node::new(ast::Expr::StringLit(<>)),
+
 	<id: Id> => Node::new(ast::Expr::Identifier(<>, ast::VarProp::default())),
+	<id: Id> <fields: StructLitFields> => Node::new(ast::Expr::StructLit(id, fields)),
 	<block: Block> => block
 };
 
@@ -115,10 +120,18 @@ Type: ast::Type<'input> = {
 		id => ast::Type::Unresolved(id)
 	},
 	MUL <typ: Type> => ast::Type::Ptr(Arc::new(typ)),
-	LCBRACK <fields: StructFields> RCBRACK => ast::Type::Struct(Arc::new(fields))
+	LCBRACK <fields: StructTypeFields> RCBRACK => ast::Type::Struct(Arc::new(fields))
 };
 
-StructFields: Vec<(&'input str, ast::Type<'input>)> = {
+StructLitFields: Vec<(&'input str, Node<'input, ast::Expr<'input>>)> = {
+	LSBRACK <field0: Id> COLON <expr0: Expr0> <fields: (COMMA Id COLON Expr0)*> RSBRACK => {
+		let mut structfields = vec![(field0, *expr0)];
+		for (_, name, _, expr) in fields { structfields.push((name, *expr)); }
+		structfields
+	}
+};
+
+StructTypeFields: Vec<(&'input str, ast::Type<'input>)> = {
 	<field0: Id> COLON <type0: Type> <fields: (COMMA Id COLON Type)*> => {
 		let mut structfields = vec![(field0, type0)];
 		for (_, name, _, typ) in fields { structfields.push((name, typ)); }
@@ -158,12 +171,12 @@ Block: Box<Node<'input, ast::Expr<'input>>> = {
 	}
 };
 
-Tuple: Vec<Node<'input, ast::Expr<'input>>> = {
+CallArgs: Vec<Node<'input, ast::Expr<'input>>> = {
 	LBRACK RBRACK => vec![],
 	LBRACK <arg0: Expr0> <args: (COMMA Expr0)*> RBRACK => {
-		let mut vec = vec![arg0];
-		for (_, arg) in args.into_iter() { vec.push(arg); }
-		vec.into_iter().map(|e| *e).collect()
+		let mut vec = vec![*arg0];
+		for (_, arg) in args.into_iter() { vec.push(*arg); }
+		vec
 	}
 };
 
@@ -178,6 +191,8 @@ extern {
 		RBRACK     => Tok::RightBracket,
 		LCBRACK    => Tok::LeftCurlyBracket,
 		RCBRACK    => Tok::RightCurlyBracket,
+		LSBRACK    => Tok::LeftSquareBracket,
+		RSBRACK    => Tok::RightSquareBracket,
 		ASSIGN     => Tok::Assign,
 		ASSIGN_NEW => Tok::AssignNew,
 		DOTDOTDOT  => Tok::DotDotDot,

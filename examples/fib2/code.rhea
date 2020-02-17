@@ -5,7 +5,7 @@ fib := (x: Int): Int -> {
 	mut b := 1;
 	mut i := 0;
 	for i < x {
-		mut tmp := b;
+		tmp := b;
 		b = a + b;
 		a = tmp;
 

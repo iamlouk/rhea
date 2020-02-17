@@ -2,17 +2,30 @@ use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub enum Error {
-    LLVMError(String),
-    Unspecified(&'static str)
+    LexerErr(String),
+    Unspecified(&'static str),
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::LLVMError(str) => write!(f, "LLVM-Error: {}", str),
+            Error::LexerErr(str) => write!(f, "The Lexer failed: {}", str),
             Error::Unspecified(str) => write!(f, "unspecified error: {}", str)
         }
     }
+}
+
+#[macro_export]
+macro_rules! lexer_err {
+    ($x:expr, $($y:expr),*) => {{
+        use std::fmt::Write;
+        use crate::utils::Error;
+
+        let mut reason = String::new();
+        write!(&mut reason, $x, $($y),*).unwrap();
+
+        Err(Error::LexerErr(reason))
+    }};
 }
 
 #[derive(Debug)]
@@ -49,8 +62,9 @@ impl<'input, T: Clone> Env<'input, T> {
         panic!(name.to_owned())
     }
 
+    /*
     pub fn take_bottom_scope(&mut self) -> Option<HashMap<&'input str, T>> {
-        if self.scopes.len() == 0 {
+        if self.scopes.is_empty() {
             None
         } else {
             Some(self.scopes.remove(0))
@@ -60,6 +74,9 @@ impl<'input, T: Clone> Env<'input, T> {
     pub fn add_bottom_scope(&mut self, scope: HashMap<&'input str, T>) {
         self.scopes.insert(0, scope);
     }
+    */
+
+
 }
 
 pub fn unescape_parsed_string(raw: &str) -> Result<String, Error> {
@@ -81,4 +98,3 @@ pub fn unescape_parsed_string(raw: &str) -> Result<String, Error> {
 
     Ok(string)
 }
-

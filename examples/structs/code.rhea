@@ -4,6 +4,8 @@ extern free := (ptr: *Void): Void;
 
 type Point := { x: Int, y: Int, z: Int };
 
+type City := { name: *Char, loc: Point };
+
 add := (p1: *Point, p2: *Point): Void -> {
 	p1->x   = (*p1).x + (*p2).x;
 	(*p1).y =   p1->y + (*p2).y;
@@ -23,6 +25,12 @@ newPoint := (x: Int, y: Int, z: Int): *Point -> {
 };
 
 main := (): Int -> {
+
+	newyork := City[name: "New York", loc: Point[x: 1, y: 2, z: 3]];
+
+	printf("City: %s (x: %d, y: %d, z: %d)\n", newyork.name,
+		newyork.loc.x, newyork.loc.y, newyork.loc.z);
+
 	a := newPoint(1, 2, 3);
 	b := newPoint(2, 3, 4);
 
