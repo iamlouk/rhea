@@ -157,7 +157,7 @@ impl<'input> Function<'input> {
 pub enum Operator {
     Add, Sub, Mul, Div,
     And, Or,
-    Equal, Smaller
+    Equal, Smaller, Greater
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +169,7 @@ pub enum Expr<'input> {
     BoolLit(bool),
     StructLit(&'input str, Vec<(&'input str, ExprNode<'input>)>),
     BinaryExpr(Box<ExprNode<'input>>, Operator, Box<ExprNode<'input>>),
+    Not(Box<ExprNode<'input>>),
     Call(Box<ExprNode<'input>>, Vec<ExprNode<'input>>),
     If(Box<ExprNode<'input>>,
        Box<ExprNode<'input>>,
@@ -243,6 +244,7 @@ impl<'input> Node<'input, Expr<'input>> {
 
                     (&Type::Int, Operator::Equal, Type::Int) => Type::Bool,
                     (&Type::Int, Operator::Smaller, Type::Int) => Type::Bool,
+                    (&Type::Int, Operator::Greater, Type::Int) => Type::Bool,
 
                     (&Type::Bool, Operator::Or, Type::Bool) => lhs,
                     (&Type::Bool, Operator::And, Type::Bool) => lhs,
@@ -252,6 +254,11 @@ impl<'input> Node<'input, Expr<'input>> {
                     (a, op, b) =>
                         unimplemented!("{:?} {:?} {:?}", a, op, b)
                 }
+            },
+            Expr::Not(ref mut arg) => match arg.check_type(vartypes, deftypes)? {
+                Type::Bool => Type::Bool,
+                Type::Int => Type::Int,
+                _ => panic!()
             },
             Expr::Call(ref mut callee, ref mut args) => {
                 let callee = callee.check_type(vartypes, deftypes)?;
@@ -305,10 +312,10 @@ impl<'input> Node<'input, Expr<'input>> {
                         if thenblocktype != elseblocktype {
                             panic!();
                         }
+                        thenblocktype
                     },
-                    None => {}
+                    None => Type::Void
                 }
-                thenblocktype.clone()
             },
             Expr::For(init, cond, inc, body) => {
                 vartypes.push_scope();
@@ -368,6 +375,10 @@ impl<'input> Node<'input, Expr<'input>> {
                 Expr::StructFieldAccess(structval, field) => {
                     let fields = match structval.check_type(vartypes, deftypes)? {
                         Type::Struct(fields) => fields,
+                        Type::Ptr(ptr) => match ptr.as_ref() {
+                            Type::Struct(fields) => fields.clone(),
+                            other => panic!("Not a struct: {:?}", other)
+                        },
                         other => panic!("Not a struct: {:?}", other)
                     };
 
@@ -396,8 +407,13 @@ impl<'input> Node<'input, Expr<'input>> {
                 _ => unimplemented!()
             },
             Expr::StructFieldAccess(structval, field) => {
-                let fields = match structval.check_type(vartypes, deftypes)? {
-                    Type::Struct(fields) => fields,
+                let structtyp = structval.check_type(vartypes, deftypes)?;
+                let fields = match structtyp {
+                    Type::Struct(ref fields) => fields.as_ref(),
+                    Type::Ptr(ref typ) => match typ.as_ref() {
+                        Type::Struct(ref fields) => fields.as_ref(),
+                        _ => panic!()
+                    },
                     _ => panic!()
                 };
 

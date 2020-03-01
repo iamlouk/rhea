@@ -13,7 +13,7 @@ SILENT=true
 
 testdir=$1
 
-if [ -d $testdir ]; then
+if [ -d $testdir ] && [ -f "$testdir/expected_output.txt" ]; then
 	[ -z $SILENT ] && printf "${CYAN}test:${NC} $(basename $testdir)\n"
 
 	$RHEA --jit -O --input "$testdir/code.rhea" 2>&1 | diff "$testdir/expected_output.txt" -

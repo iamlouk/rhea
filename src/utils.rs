@@ -61,22 +61,6 @@ impl<'input, T: Clone> Env<'input, T> {
         }
         panic!(name.to_owned())
     }
-
-    /*
-    pub fn take_bottom_scope(&mut self) -> Option<HashMap<&'input str, T>> {
-        if self.scopes.is_empty() {
-            None
-        } else {
-            Some(self.scopes.remove(0))
-        }
-    }
-
-    pub fn add_bottom_scope(&mut self, scope: HashMap<&'input str, T>) {
-        self.scopes.insert(0, scope);
-    }
-    */
-
-
 }
 
 pub fn unescape_parsed_string(raw: &str) -> Result<String, Error> {

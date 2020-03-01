@@ -1,0 +1,76 @@
+extern printf := (fmt: *Char, ...): Int;
+extern scanf := (fmt: *Char, ...): Int;
+extern malloc := (size: Int): *Void;
+
+swap := (data: *Int, i: Int, j: Int): Void -> {
+	# printf("swap([%d], [%d]): %d, %d -> ", i, j, *(data + i), *(data + j));
+	tmp := *(data + i);
+	*(data + i) = *(data + j);
+	*(data + j) = tmp;
+	# printf("%d, %d\n", *(data + i), *(data + j));
+	# {}
+};
+
+# partition := (data: *Int, lo: Int, hi: Int): Int -> {
+#	piv := *(data + hi);
+#	mut i := lo;
+#	mut j := lo;
+#
+#	for j < hi + 1 {
+#		if *(data + j) < piv {
+#			swap(data, i, j);
+#			i = i + 1;
+#		} else {};
+#		j = j + 1;
+#	};
+#
+#	swap(data, i, hi);
+#	i
+# };
+# 
+# quicksort := (data: *Int, i: Int, j: Int): Void -> if i < j {
+#	k := partition(data, i, j);
+#	quicksort(data, i, k - 1);
+#	quicksort(data, k + 1, j);
+# } else {};
+#
+# sort := (n: Int, data: *Int): Void -> quicksort(data, 0, n - 1);
+
+sort := (n: Int, data: *Int): Void -> {
+	mut swaped := true;
+	for swaped {
+		for mut i := 0; i < n; i = i + 1 { printf("[%d]: %d\n", i, *(data + i)) };
+		swaped = false;
+		for mut i := 0; i < n - 1; i = i + 1 {
+			# printf("ptrs: %p <-> %p\n", data + i, data + i + 1);
+			# printf("idxs: %d <-> %d\n", i, i + 1);
+			# printf("vals: %d <-> %d\n", *(data + i), *(data + i + 1));
+			if *(data + i) > *(data + i + 1) {
+				printf("!swap: %d <-> %d\n",
+					*(data + i),
+					*(data + i + 1));
+				swap(data, i, i + 1);
+				swaped = true;
+			};
+		};
+	};
+};
+
+main := (): Int -> {
+	n := 10;
+	data := malloc(n * 8) as *Int;
+	for mut i := 0; i < n; i = i + 1 {
+		scanf(" %d ", data + i);
+	};
+
+	printf("Input:\n");
+	# for mut i := 0; i < n; i = i + 1 { printf("[%d]: %d\n", i, *(data + i)) };
+
+	sort(n, data);
+
+	printf("Sorted:\n");
+	for mut i := 0; i < n; i = i + 1 { printf("[%d]: %d\n", i, *(data + i)) };
+
+	0
+};
+

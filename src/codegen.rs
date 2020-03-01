@@ -150,6 +150,9 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 Ok(BasicValueEnum::IntValue(self.context.i64_type()
                     .const_int(unsafe { std::mem::transmute(*num) }, false))),
 
+            Expr::BoolLit(true) => Ok(self.context.bool_type().const_all_ones().as_basic_value_enum()),
+            Expr::BoolLit(false) => Ok(self.context.bool_type().const_zero().as_basic_value_enum()),
+
             Expr::StringLit(string) => {
                 if let Some(global) = self.strings.get(string) {
                     return Ok(global.clone().as_basic_value_enum())
@@ -270,7 +273,7 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                         };
 
                         let ptr = unsafe {
-                            self.builder.build_gep(ptr, &[offset], "ptrderef")
+                            self.builder.build_gep(ptr, &[offset], "ptradd")
                         };
 
                         ptr.as_basic_value_enum()
@@ -286,10 +289,22 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                             self.builder.build_int_compare(
                                 inkwell::IntPredicate::EQ,
                                 self.to_int_value(lhsval), self.to_int_value(rhsval), "cmpres")),
+                    (Type::Int, Operator::Greater, Type::Int) =>
+                        BasicValueEnum::IntValue(
+                            self.builder.build_int_compare(
+                                inkwell::IntPredicate::SGT,
+                                self.to_int_value(lhsval), self.to_int_value(rhsval), "cmpres")),
 
                     _ => unimplemented!()
                 };
                 Ok(res)
+            },
+
+            Expr::Not(arg) => match self.gen_code_node(arg, env, bb)? {
+                BasicValueEnum::IntValue(val) =>
+                    Ok(BasicValueEnum::IntValue(
+                        self.builder.build_not(val, "notres"))),
+                _ => panic!()
             },
 
             Expr::Call(callee, args) => match callee.node {
@@ -346,6 +361,26 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 } else {
                     Ok(self.default_val())
                 }
+            },
+
+            Expr::If(cond, thenexpr, None) => {
+                let cond = match self.gen_code_node(cond, env, bb)? {
+                    BasicValueEnum::IntValue(val) => val,
+                    _ => panic!()
+                };
+
+                let func = bb.get_parent().unwrap();
+                let thenbb = self.context.append_basic_block(func, "then");
+                let donebb = self.context.append_basic_block(func, "done");
+
+                self.builder.build_conditional_branch(cond, &thenbb, &donebb);
+
+                self.builder.position_at_end(&thenbb);
+                self.gen_code_node(thenexpr, env, &thenbb)?;
+                self.builder.build_unconditional_branch(&donebb);
+
+                self.builder.position_at_end(&donebb);
+                Ok(self.default_val())
             },
 
             Expr::For(init, cond, inc, body) => {
@@ -431,26 +466,41 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
                 Expr::StructFieldAccess(structval, field) => {
                     let value = self.gen_code_node(value, env, bb)?;
                     let typ = structval.get_type();
-                    let fields = match typ {
-                        Type::Struct(ref fields) => fields.as_ref(),
+                    let (fields, viaptr) = match typ {
+                        Type::Struct(ref fields) => (fields.as_ref(), false),
+                        Type::Ptr(ref typ) => match typ.as_ref() {
+                            Type::Struct(ref fields) => (fields.as_ref(), true),
+                            _ => panic!()
+                        },
                         _ => panic!()
                     };
                     let offset = self.get_struct_offset(fields, field)?;
-                    if let Expr::PtrDeref(ptr, 0) = &structval.node {
-                        let ptr = match self.gen_code_node(&ptr, env, bb)? {
-                            BasicValueEnum::PointerValue(ptr) => ptr,
-                            _ => panic!()
-                        };
+                    if !viaptr {
+                        if let Expr::PtrDeref(ptr, 0) = &structval.node {
+                            let ptr = match self.gen_code_node(&ptr, env, bb)? {
+                                BasicValueEnum::PointerValue(ptr) => ptr,
+                                _ => panic!()
+                            };
 
-                        let ptr = unsafe { self.builder.build_struct_gep(ptr, offset, "") };
-                        self.builder.build_store(ptr, value);
+                            let ptr = unsafe { self.builder.build_struct_gep(ptr, offset, "") };
+                            self.builder.build_store(ptr, value);
+                        } else {
+                            let structval = match self.gen_code_node(structval, env, bb)? {
+                                BasicValueEnum::StructValue(structval) => structval,
+                                _ => panic!()
+                            };
+                            self.builder.build_insert_value(structval, value, offset, "").unwrap();
+                        }
                     } else {
-                        let structval = match self.gen_code_node(structval, env, bb)? {
-                            BasicValueEnum::StructValue(structval) => structval,
+                        let ptr = match self.gen_code_node(structval, env, bb)? {
+                            BasicValueEnum::PointerValue(ptr) => unsafe {
+                                self.builder.build_struct_gep(ptr, offset, "")
+                            },
                             _ => panic!()
                         };
-                        self.builder.build_insert_value(structval, value, offset, "").unwrap();
+                        self.builder.build_store(ptr, value);
                     }
+
                     Ok(value)
                 },
                 _ => panic!()
@@ -490,21 +540,37 @@ impl<'ctx, 'input> CodeGen<'ctx, 'input> {
 
             Expr::StructFieldAccess(structval, field) => {
                 let typ = structval.get_type();
-                let fields = match typ {
-                    Type::Struct(ref fields) => fields.as_ref(),
+                let (fields, viaptr) = match typ {
+                    Type::Struct(ref fields) => (fields.as_ref(), false),
+                    Type::Ptr(ref typ) => match typ.as_ref() {
+                        Type::Struct(ref fields) => (fields.as_ref(), true),
+                        _ => panic!()
+                    },
                     _ => panic!()
                 };
                 let offset = self.get_struct_offset(fields, field)?;
-                let structval = match self.gen_code_node(structval, env, bb)? {
-                    BasicValueEnum::StructValue(structval) => structval,
-                    _ => panic!()
-                };
-                Ok(self.builder
-                   .build_extract_value(structval, offset, "")
-                   .unwrap())
+                let structval = self.gen_code_node(structval, env, bb)?;
+                if viaptr {
+                    let ptr = match structval {
+                        BasicValueEnum::PointerValue(ptr) => unsafe {
+                            self.builder.build_struct_gep(ptr, offset, "")
+                        },
+                        _ => panic!()
+                    };
+                    Ok(self.builder
+                       .build_load(ptr, ""))
+                    
+                } else {
+                    let structval = match structval {
+                        BasicValueEnum::StructValue(val) => val, _ => panic!()
+                    };
+                    Ok(self.builder
+                        .build_extract_value(structval, offset, "")
+                        .unwrap())
+                }
             },
 
-            _ => unimplemented!()
+            other => unimplemented!("{:?}", other)
         }
     }
 

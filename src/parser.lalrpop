@@ -71,6 +71,8 @@ Expr2: Box<Node<'input, ast::Expr<'input>>> = {
 		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Smaller, b)),
 	<a: Expr2> EQUAL   <b: Expr3> =>
 		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Equal, b)),
+	<a: Expr2> GREATER <b: Expr3> =>
+		Node::new(ast::Expr::BinaryExpr(a, ast::Operator::Greater, b)),
 	<a: Expr3> => a
 };
 
@@ -209,6 +211,8 @@ extern {
 		OR         => Tok::Or,
 		EQUAL      => Tok::Equal,
 		SMALLER    => Tok::Smaller,
+		GREATER    => Tok::Greater,
+		NOT        => Tok::Not,
 		IF         => Tok::If,
 		ELSE       => Tok::Else,
 		FOR        => Tok::For,

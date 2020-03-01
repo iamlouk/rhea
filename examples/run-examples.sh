@@ -19,7 +19,7 @@ fi
 
 i=0
 for dir in ./*/; do
-	if [ -d $dir ]; then
+	if [ -d $dir ] && [ -f "$dir/expected_output.txt" ]; then
 		i=$(($i + 1))
 		[ -z $SILENT ] && printf "${CYAN}test #${i}:${NC} $(basename $dir)\n"
 

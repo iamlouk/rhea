@@ -20,7 +20,7 @@ pub enum Tok<'input> {
     Assign, AssignNew, Dot, DotDotDot,
     Comma, Colon, Arrow, Semicolon,
     Add, Sub, Mul, Div,
-    And, Or, Equal, Smaller,
+    And, Or, Equal, Smaller, Greater, Not,
 
     If, Else, Then, For, Extern, Mut, As, Struct, Type
 }
@@ -104,8 +104,10 @@ impl<'input> Iterator for Lexer<'input> {
             '|' => Some(Ok((self.loc - 1, Tok::Or,        self.loc))),
             '&' => Some(Ok((self.loc - 1, Tok::And,       self.loc))),
             '<' => Some(Ok((self.loc - 1, Tok::Smaller,   self.loc))),
+            '>' => Some(Ok((self.loc - 1, Tok::Greater,   self.loc))),
             ',' => Some(Ok((self.loc - 1, Tok::Comma,     self.loc))),
             ';' => Some(Ok((self.loc - 1, Tok::Semicolon, self.loc))),
+            '!' => Some(Ok((self.loc - 1, Tok::Not,       self.loc))),
 
             ':' => {
                 if self.chars.peek() == Some(&'=') {
